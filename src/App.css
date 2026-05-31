@@ -503,3 +503,75 @@ body {
   border-radius: 50%;
   border: 1px solid var(--bg-main);
 }
+
+/* ── AllPredictions — player selector ──────────────────────────────────── */
+.player-selector {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.player-pill {
+  padding: 7px 16px;
+  border-radius: 20px;
+  border: 1.5px solid;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'DM Sans';
+  transition: all .2s ease;
+  white-space: nowrap;
+}
+.player-pill:hover { opacity: 0.8; transform: translateY(-1px); }
+.player-pill.active { font-weight: 700; }
+
+/* ── Read-only score badge (replaces score-inp in AllPredictions) ────────── */
+.score-badge {
+  width: 100%;
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: 'DM Sans';
+  border: 1px solid var(--border-dark);
+  background: transparent;
+  color: var(--text-dark);
+  line-height: 1.4;
+}
+.score-badge.pick-exact    { background: rgba(240,192,48,0.12);  border-color: rgba(240,192,48,0.45);  color: var(--accent-gold); }
+.score-badge.pick-correct  { background: rgba(51,204,102,0.1);   border-color: rgba(51,204,102,0.4);   color: var(--accent-green); }
+.score-badge.pick-wrong    { background: rgba(204,51,51,0.1);    border-color: rgba(204,51,51,0.4);    color: var(--accent-red); }
+.score-badge.pick-pending  { background: transparent;            border-color: var(--border-dark);     color: var(--text-dark); }
+.score-badge.pick-empty    { background: transparent;            border-color: transparent;            color: var(--text-dark); opacity: 0.4; }
+
+/* ── Pick chip (group top-3, qualifier teams, final ranking) ─────────────── */
+.pick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'DM Sans';
+  border: 1px solid var(--border-dark);
+  background: transparent;
+  color: var(--text-dark);
+  white-space: nowrap;
+  transition: none;
+}
+.pick-chip.pick-exact    { background: rgba(240,192,48,0.12);  border-color: rgba(240,192,48,0.45);  color: var(--accent-gold); }
+.pick-chip.pick-correct  { background: rgba(51,204,102,0.1);   border-color: rgba(51,204,102,0.4);   color: var(--accent-green); }
+.pick-chip.pick-wrong    { background: rgba(204,51,51,0.1);    border-color: rgba(204,51,51,0.4);    color: var(--accent-red); }
+.pick-chip.pick-pending  { background: transparent;            border-color: var(--border-dark);     color: var(--text-dark); }
+
+/* ── Qualifier chip grid ─────────────────────────────────────────────────── */
+.ko-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+}

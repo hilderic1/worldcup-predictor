@@ -1,19 +1,6 @@
 import { useState, useMemo } from "react";
-import { GLOBAL_DEADLINE, PLAYERS } from "../constants";
+import { GLOBAL_DEADLINE, PLAYERS, PLAYER_COLORS } from "../constants";
 import { isPast } from "../utils";
-
-const PLAYER_COLORS = {
-  "David": "#33cc66",
-  "Dorian": "#f0c030",
-  "Antonia": "#00d8f6",
-  "Irma": "#e040fb",
-  "Laura": "#ff5252",
-  "Dorus": "#ff9100",
-  "Sandra": "#2979ff",
-  "Hilde": "#00e676",
-  "Eric": "#ffd600",
-  "Claude": "#b388ff"
-};
 
 function ScoreHistoryChart({ history }) {
   const [hoveredIndex, setHoveredIndex] = useState(null);

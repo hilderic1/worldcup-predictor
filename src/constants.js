@@ -93,6 +93,19 @@ export const GROUP_MATCHES = [
 
 export const PLAYERS = ["David", "Dorian", "Antonia", "Irma", "Laura", "Dorus", "Sandra", "Hilde", "Eric", "Claude"];
 
+export const PLAYER_COLORS = {
+  "David":   "#33cc66",
+  "Dorian":  "#f0c030",
+  "Antonia": "#00d8f6",
+  "Irma":    "#e040fb",
+  "Laura":   "#ff5252",
+  "Dorus":   "#ff9100",
+  "Sandra":  "#2979ff",
+  "Hilde":   "#00e676",
+  "Eric":    "#ffd600",
+  "Claude":  "#b388ff",
+};
+
 export const FINAL_RANKS = ["1st (Winner)", "2nd (Runner-up)", "3rd place", "4th place"];
 
 export const KO_ROUNDS = [

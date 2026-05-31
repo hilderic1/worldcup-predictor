@@ -13,6 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import Picks from "./pages/Picks";
 import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
+import AllPredictions from "./pages/AllPredictions";
 import "./App.css";
 
 const SESSION_KEY = "wc_session";
@@ -37,6 +38,9 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [leaderboardHistory, setLeaderboardHistory] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+
+  // Picks reveal — true once global deadline passes OR all players have submitted
+  const [allPicksRevealed, setAllPicksRevealed] = useState(() => isPast(GLOBAL_DEADLINE));
 
   // Admin UI state
   const [adminTab, setAdminTab] = useState("fixtures");
@@ -87,6 +91,18 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadActuals(); }, [loadActuals]);
+
+  // ── PICKS REVEAL CHECK ──
+  const checkPicksRevealed = useCallback(async () => {
+    if (isPast(GLOBAL_DEADLINE)) { setAllPicksRevealed(true); return; }
+    const { data } = await supabase.from("match_predictions").select("player_name");
+    const submitted = new Set((data || []).map(r => r.player_name));
+    setAllPicksRevealed(PLAYERS.every(p => submitted.has(p)));
+  }, []);
+
+  useEffect(() => {
+    if (player && !allPicksRevealed) checkPicksRevealed();
+  }, [player, allPicksRevealed, checkPicksRevealed]);
 
   // ── LEADERBOARD ──
   const loadLeaderboard = useCallback(async () => {
@@ -460,6 +476,14 @@ export default function App() {
                 >
                   Profile
                 </button>
+                {allPicksRevealed && (
+                  <button
+                    className={`nav-pill ${view === "predictions" ? "active" : ""}`}
+                    onClick={() => navigateTo("predictions")}
+                  >
+                    👁 Predictions
+                  </button>
+                )}
               </>
             )}
             {player?.is_admin && (
@@ -476,6 +500,14 @@ export default function App() {
                 >
                   Leaderboard
                 </button>
+                {allPicksRevealed && (
+                  <button
+                    className={`nav-pill ${view === "predictions" ? "active" : ""}`}
+                    onClick={() => navigateTo("predictions")}
+                  >
+                    👁 Predictions
+                  </button>
+                )}
               </>
             )}
             {player && (
@@ -552,6 +584,20 @@ export default function App() {
         {/* PROFILE */}
         {view === "profile" && player && !player.is_admin && (
           <Profile player={player} />
+        )}
+
+        {/* ALL PREDICTIONS */}
+        {view === "predictions" && allPicksRevealed && (
+          <AllPredictions
+            actualMatches={actualMatches}
+            actualGroupTopThree={actualGroupTopThree}
+            actualR32={actualR32}
+            actualR16={actualR16}
+            actualQF={actualQF}
+            actualSFRank={actualSFRank}
+            koFixtures={koFixtures}
+            koActualScores={koActualScores}
+          />
         )}
 
         {/* ADMIN */}
