@@ -533,7 +533,7 @@ export default function App() {
               </div>
 
               <div className="tab-row">
-                {[["matches","⚽ Match Scores"],["groups","📊 Group Top 3"],["r32","R32 Qualifiers"],["r16","R16"],["qf","🏆 Quarter-Finals"],["sf","🥇 Final Ranking"]].map(([k,l]) => (
+                {[["matches","⚽ Matches"],["groups","📊 Groups"],["r32","R32"],["r16","R16"],["qf","QF"],["sf","🥇 Final"]].map(([k,l]) => (
                   <button key={k} className={`tab ${predictTab===k?"active":""}`} onClick={()=>setPredictTab(k)}>{l}</button>
                 ))}
               </div>
