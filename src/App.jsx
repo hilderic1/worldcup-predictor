@@ -24,6 +24,7 @@ const GROUPS = {
 };
 
 const ALL_TEAMS = Object.values(GROUPS).flat();
+const SORTED_TEAMS = [...ALL_TEAMS].sort((a, b) => a.localeCompare(b));
 
 const GROUP_MATCHES = [
   { id: "A1", group: "A", home: "Mexico", away: "South Africa", date: "6/11/26", time: "20:00" },
@@ -668,7 +669,7 @@ export default function App() {
                                   value={v[rank]||""}
                                   onChange={e=>setGroupTopThree(prev=>({...prev,[grp]:{...prev[grp],[rank]:e.target.value}}))}>
                                   <option value="">— pick —</option>
-                                  {teams.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                                  {[...teams].sort((a,b)=>a.localeCompare(b)).map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                                 </select>
                               </div>
                             ))}
@@ -689,7 +690,7 @@ export default function App() {
                           value={r32Pred[i]||""}
                           onChange={e=>{const u=[...r32Pred];u[i]=e.target.value;setR32Pred(u);}}>
                           <option value="">— pick {i+1} —</option>
-                          {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                          {SORTED_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                         </select>
                       ))}
                     </div>
@@ -706,7 +707,7 @@ export default function App() {
                           value={r16Pred[i]||""}
                           onChange={e=>{const u=[...r16Pred];u[i]=e.target.value;setR16Pred(u);}}>
                           <option value="">— pick {i+1} —</option>
-                          {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                          {SORTED_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                         </select>
                       ))}
                     </div>
@@ -723,7 +724,7 @@ export default function App() {
                           value={qfPred[i]||""}
                           onChange={e=>{const u=[...qfPred];u[i]=e.target.value;setQfPred(u);}}>
                           <option value="">— pick {i+1} —</option>
-                          {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                          {SORTED_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                         </select>
                       ))}
                     </div>
@@ -742,7 +743,7 @@ export default function App() {
                             value={sfRankPred[i]||""}
                             onChange={e=>{const u=[...sfRankPred];u[i]=e.target.value;setSfRankPred(u);}}>
                             <option value="">— pick team —</option>
-                            {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                            {SORTED_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                           </select>
                         </div>
                       ))}
@@ -831,14 +832,14 @@ export default function App() {
                               value={fix.home||""}
                               onChange={e=>{const u={...koFixtures};if(!u[r.id])u[r.id]=[];if(!u[r.id][i])u[r.id][i]={};u[r.id][i]={...u[r.id][i],home:e.target.value};setKoFixtures(u);}}>
                               <option value="">— home —</option>
-                              {availableTeams.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                              {[...availableTeams].sort((a,b)=>a.localeCompare(b)).map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                             </select>
                             <div className="sep" style={{textAlign:"center"}}>vs</div>
                             <select className="fixture-sel"
                               value={fix.away||""}
                               onChange={e=>{const u={...koFixtures};if(!u[r.id])u[r.id]=[];if(!u[r.id][i])u[r.id][i]={};u[r.id][i]={...u[r.id][i],away:e.target.value};setKoFixtures(u);}}>
                               <option value="">— away —</option>
-                              {availableTeams.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                              {[...availableTeams].sort((a,b)=>a.localeCompare(b)).map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                             </select>
                           </div>
                         );
@@ -887,7 +888,7 @@ export default function App() {
                               <select className="rank-sel" value={v[rank]||""}
                                 onChange={e=>setActualGroupTopThree(prev=>({...prev,[grp]:{...prev[grp],[rank]:e.target.value}}))}>
                                 <option value="">— pick —</option>
-                                {teams.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                                {[...teams].sort((a,b)=>a.localeCompare(b)).map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                               </select>
                             </div>
                           ))}
@@ -925,7 +926,7 @@ export default function App() {
                           <select key={i} className="rank-sel" value={arr[i]||""}
                             onChange={e=>{const u=[...arr];u[i]=e.target.value;setArr(u);}}>
                             <option value="">— team {i+1} —</option>
-                            {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                            {SORTED_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                           </select>
                         ))}
                       </div>
@@ -940,7 +941,7 @@ export default function App() {
                           <select className="rank-sel" style={{maxWidth:220}} value={actualSFRank[i]||""}
                             onChange={e=>{const u=[...actualSFRank];u[i]=e.target.value;setActualSFRank(u);}}>
                             <option value="">— team —</option>
-                            {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                            {SORTED_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
                           </select>
                         </div>
                       ))}
