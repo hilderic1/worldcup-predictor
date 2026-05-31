@@ -109,7 +109,7 @@ function scoreSFRanking(pred, actual) {
 }
 
 function calcTotalScore(preds, actuals) {
-  let matchPts = 0, groupPts = 0, r32Pts = 0, qfPts = 0, sfPts = 0;
+  let matchPts = 0, groupPts = 0, r32Pts = 0, r16Pts = 0, qfPts = 0, sfPts = 0;
 
   GROUP_MATCHES.forEach(m => {
     matchPts += scoreMatch(preds.matches?.[m.id], actuals.matches?.[m.id]).total;
@@ -120,10 +120,11 @@ function calcTotalScore(preds, actuals) {
   });
 
   r32Pts = scoreR32(preds.r32, actuals.r32);
+  r16Pts = (preds.r16 && actuals.r16) ? preds.r16.filter(t => t && actuals.r16.includes(t)).length * 15 : 0;
   qfPts = scoreQF(preds.qf, actuals.qf);
   sfPts = scoreSFRanking(preds.sfRanking, actuals.sfRanking);
 
-  return { total: matchPts + groupPts + r32Pts + qfPts + sfPts, matchPts, groupPts, r32Pts, qfPts, sfPts };
+  return { total: matchPts + groupPts + r32Pts + r16Pts + qfPts + sfPts, matchPts, groupPts, r32Pts, r16Pts, qfPts, sfPts };
 }
 
 // ─── FLAGS ────────────────────────────────────────────────────────────────────
@@ -285,6 +286,7 @@ export default function App() {
   const [matchPreds, setMatchPreds] = useState({});       // matchId -> {home_score, away_score}
   const [groupTopTwo, setGroupTopTwo] = useState({});     // groupId -> {first, second}
   const [r32Pred, setR32Pred] = useState(Array(32).fill(""));
+  const [r16Pred, setR16Pred] = useState(Array(16).fill(""));
   const [qfPred, setQfPred] = useState(Array(8).fill(""));
   const [sfRankPred, setSfRankPred] = useState(Array(4).fill(""));  // [1st,2nd,3rd,4th]
 
@@ -292,6 +294,7 @@ export default function App() {
   const [actualMatches, setActualMatches] = useState({});
   const [actualGroupTopTwo, setActualGroupTopTwo] = useState({});
   const [actualR32, setActualR32] = useState(Array(32).fill(""));
+  const [actualR16, setActualR16] = useState(Array(16).fill(""));
   const [actualQF, setActualQF] = useState(Array(8).fill(""));
   const [actualSFRank, setActualSFRank] = useState(Array(4).fill(""));
 
@@ -323,6 +326,7 @@ export default function App() {
     setActualGroupTopTwo(agt2);
     const ak = {}; (rk.data||[]).forEach(r => ak[r.round] = r.teams);
     setActualR32(ak["R32"] || Array(32).fill(""));
+    setActualR16(ak["R16"] || Array(16).fill(""));
     setActualQF(ak["QF"] || Array(8).fill(""));
     setActualSFRank(ak["SF_RANK"] || Array(4).fill(""));
   }, []);
@@ -346,6 +350,7 @@ export default function App() {
     setGroupTopTwo(gt2);
     const kp = {}; (pk.data||[]).forEach(r => kp[r.round] = r.teams);
     setR32Pred(kp["R32"] || Array(32).fill(""));
+    setR16Pred(kp["R16"] || Array(16).fill(""));
     setQfPred(kp["QF"] || Array(8).fill(""));
     setSfRankPred(kp["SF_RANK"] || Array(4).fill(""));
     setLoading(false);
@@ -371,20 +376,21 @@ export default function App() {
       });
       (pk.data||[]).filter(r=>r.player_name===name).forEach(r => {
         if (r.round==="R32") preds.r32 = r.teams;
+        if (r.round==="R16") preds.r16 = r.teams;
         if (r.round==="QF") preds.qf = r.teams;
         if (r.round==="SF_RANK") preds.sfRanking = r.teams;
       });
       const actuals = {
         matches: actualMatches,
         groupTopTwo: actualGroupTopTwo,
-        r32: actualR32, qf: actualQF, sfRanking: actualSFRank,
+        r32: actualR32, r16: actualR16, qf: actualQF, sfRanking: actualSFRank,
       };
       return { name, ...calcTotalScore(preds, actuals) };
     });
     scores.sort((a,b) => b.total - a.total);
     setLeaderboard(scores);
     setLoading(false);
-  }, [actualMatches, actualGroupTopTwo, actualR32, actualQF, actualSFRank]);
+  }, [actualMatches, actualGroupTopTwo, actualR32, actualR16, actualQF, actualSFRank]);
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -413,6 +419,7 @@ export default function App() {
 
       const koRows = [
         { player_name: player.name, round: "R32", teams: r32Pred },
+        { player_name: player.name, round: "R16", teams: r16Pred },
         { player_name: player.name, round: "QF", teams: qfPred },
         { player_name: player.name, round: "SF_RANK", teams: sfRankPred },
       ];
@@ -437,6 +444,7 @@ export default function App() {
 
       const koRows = [
         { round: "R32", teams: actualR32 },
+        { round: "R16", teams: actualR16 },
         { round: "QF", teams: actualQF },
         { round: "SF_RANK", teams: actualSFRank },
       ];
@@ -518,13 +526,14 @@ export default function App() {
                   <div className="legend-item"><span className="legend-chip">max 40</span> Per match total</div>
                   <div className="legend-item"><span className="legend-chip">5 (+5)</span> Group top-3 (+ correct rank)</div>
                   <div className="legend-item"><span className="legend-chip">10</span> Per R32 qualifier correctly predicted</div>
+                  <div className="legend-item"><span className="legend-chip">15</span> Per R16 team correctly predicted</div>
                   <div className="legend-item"><span className="legend-chip">20</span> Per QF team correctly predicted</div>
                   <div className="legend-item"><span className="legend-chip">25 (+5)</span> Per SF team (+ correct final rank)</div>
                 </div>
               </div>
 
               <div className="tab-row">
-                {[["matches","⚽ Match Scores"],["groups","📊 Group Top 3"],["r32","R32 Qualifiers"],["qf","🏆 Quarter-Finals"],["sf","🥇 Final Ranking"]].map(([k,l]) => (
+                {[["matches","⚽ Match Scores"],["groups","📊 Group Top 3"],["r32","R32 Qualifiers"],["r16","R16"],["qf","🏆 Quarter-Finals"],["sf","🥇 Final Ranking"]].map(([k,l]) => (
                   <button key={k} className={`tab ${predictTab===k?"active":""}`} onClick={()=>setPredictTab(k)}>{l}</button>
                 ))}
               </div>
@@ -605,6 +614,22 @@ export default function App() {
                 )}
 
                 {/* QF */}
+                {predictTab==="r16" && (
+                  <div className="card">
+                    <div className="card-label">16 teams reaching the Round of 16 — 15pts per correct team</div>
+                    <div className="r32-grid">
+                      {Array(16).fill(0).map((_,i) => (
+                        <select key={i} className="rank-sel" disabled={deadlinePassed}
+                          value={r16Pred[i]||""}
+                          onChange={e => { const u=[...r16Pred]; u[i]=e.target.value; setR16Pred(u); }}>
+                          <option value="">— pick {i+1} —</option>
+                          {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                        </select>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {predictTab==="qf" && (
                   <div className="card">
                     <div className="card-label">8 teams reaching the Quarter-Finals — 20pts per correct team</div>
@@ -668,7 +693,7 @@ export default function App() {
               </div>
 
               <div className="tab-row">
-                {[["results","⚽ Match Results"],["groups","📊 Group Top 3"],["r32","R32"],["qf","QF"],["sf","Final Ranking"]].map(([k,l]) => (
+                {[["results","⚽ Match Results"],["groups","📊 Group Top 3"],["r32","R32"],["r16","R16"],["qf","QF"],["sf","Final Ranking"]].map(([k,l]) => (
                   <button key={k} className={`tab ${adminTab===k?"active":""}`} onClick={()=>setAdminTab(k)}>{l}</button>
                 ))}
               </div>
@@ -736,6 +761,21 @@ export default function App() {
                 </div>
               )}
 
+              {adminTab==="r16" && (
+                <div className="card">
+                  <div className="card-label">16 actual Round of 16 teams</div>
+                  <div className="r32-grid">
+                    {Array(16).fill(0).map((_,i) => (
+                      <select key={i} className="rank-sel" value={actualR16[i]||""}
+                        onChange={e=>{const u=[...actualR16];u[i]=e.target.value;setActualR16(u);}}>
+                        <option value="">— team {i+1} —</option>
+                        {ALL_TEAMS.map(t=><option key={t} value={t}>{f(t)} {t}</option>)}
+                      </select>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {adminTab==="qf" && (
                 <div className="card">
                   <div className="card-label">8 actual Quarter-Finalists</div>
@@ -792,7 +832,7 @@ export default function App() {
                       <div>
                         <div className="lb-name">{e.name}</div>
                         <div className="lb-breakdown">
-                          Matches {e.matchPts} · Groups {e.groupPts} · R32 {e.r32Pts} · QF {e.qfPts} · SF/Final {e.sfPts}
+                          Matches {e.matchPts} · Groups {e.groupPts} · R32 {e.r32Pts} · R16 {e.r16Pts} · QF {e.qfPts} · SF/Final {e.sfPts}
                         </div>
                       </div>
                       <div style={{textAlign:"right"}}>
