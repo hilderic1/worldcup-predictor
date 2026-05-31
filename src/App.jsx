@@ -5,6 +5,7 @@ import "./App.css";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://YOUR_PROJECT.supabase.co";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "YOUR_ANON_KEY";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const SESSION_KEY = "wc_session";
 
 // ─── 2026 WORLD CUP GROUPS ────────────────────────────────────────────────────
 const GROUPS = {
@@ -244,6 +245,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const [loginError, setLoginError] = useState("");
+  const [restoringSession, setRestoringSession] = useState(() => !!localStorage.getItem(SESSION_KEY));
 
   // Player predictions
   const [matchPreds, setMatchPreds] = useState({});
@@ -356,16 +358,39 @@ export default function App() {
   }, [actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank, koActualScores]);
 
   // ── LOGIN ──
+  const signIn = useCallback(async (name, password) => {
+    const { data, error } = await supabase.from("players").select("*")
+      .eq("name", name).eq("password_hash", password).single();
+    if (error || !data) return false;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ name, password }));
+    setPlayer(data);
+    if (data.is_admin) setView("admin");
+    else { await loadPredictions(data.name); setView("predict"); }
+    return true;
+  }, [loadPredictions]);
+
+  useEffect(() => {
+    (async () => {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw) {
+        try {
+          const { name, password } = JSON.parse(raw);
+          if (!(await signIn(name, password))) localStorage.removeItem(SESSION_KEY);
+        } catch {
+          localStorage.removeItem(SESSION_KEY);
+        }
+      }
+      setRestoringSession(false);
+    })();
+  }, [signIn]);
+
   async function handleLogin(e) {
     e.preventDefault();
     const form = e.target;
     setLoginError("");
-    const { data, error } = await supabase.from("players").select("*")
-      .eq("name", form.name.value).eq("password_hash", form.password.value).single();
-    if (error || !data) { setLoginError("Wrong name or password."); return; }
-    setPlayer(data);
-    if (data.is_admin) { setView("admin"); }
-    else { await loadPredictions(data.name); setView("predict"); }
+    if (!(await signIn(form.name.value, form.password.value))) {
+      setLoginError("Wrong name or password.");
+    }
   }
 
   // ── SAVE PREDICTIONS ──
@@ -454,7 +479,11 @@ export default function App() {
     } catch { setSaveState("error"); setTimeout(() => setSaveState("idle"), 3000); }
   }
 
-  function logout() { setPlayer(null); setView("login"); }
+  function logout() {
+    localStorage.removeItem(SESSION_KEY);
+    setPlayer(null);
+    setView("login");
+  }
 
   // ── RENDER HELPERS ──
   function KoMatchGrid({ round, fixtures, scores, setScores, disabled }) {
@@ -504,7 +533,7 @@ export default function App() {
         <div className="main">
 
           {/* LOGIN */}
-          {view==="login" && (
+          {view==="login" && !restoringSession && (
             <div className="login-outer">
               <div className="login-box">
                 <div className="login-logo">⚽ WC 2026</div>
