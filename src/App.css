@@ -407,4 +407,99 @@ body {
   
   .fixture-row { grid-template-columns: 24px 1fr 30px 10px 30px 1fr; gap: 4px; padding: 10px; }
   .fixture-sel { padding: 6px; font-size: 11px; }
+
+  /* Mobile chart styles */
+  .chart-outer {
+    padding: 16px;
+  }
+  .chart-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .chart-wrapper {
+    padding: 8px 4px;
+  }
+  .legend-item {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+}
+
+/* Leaderboard Chart styling (General) */
+.chart-outer {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  padding: 24px;
+  margin-top: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.chart-title {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--accent-gold);
+}
+
+.chart-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.chart-wrapper {
+  background: rgba(7, 12, 24, 0.5);
+  border: 1px solid var(--border-dark);
+  border-radius: 12px;
+  padding: 16px 12px 8px 12px;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.legend-item.inactive {
+  opacity: 0.4;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.legend-item:hover {
+  transform: translateY(-1px);
+}
+
+.legend-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--bg-main);
 }

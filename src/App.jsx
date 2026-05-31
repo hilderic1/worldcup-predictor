@@ -4,7 +4,10 @@ import {
   PLAYERS, GROUPS, KO_ROUNDS, SORTED_TEAMS, FINAL_RANKS, ALL_TEAMS, f,
   GLOBAL_DEADLINE, GROUP_MATCHES,
 } from "./constants";
-import { calcTotalScore, isPast, currentOpenRound, formatDeadline } from "./utils";
+import {
+  calcTotalScore, isPast, currentOpenRound, formatDeadline,
+  scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking
+} from "./utils";
 import KoMatchGrid from "./components/KoMatchGrid";
 import Dashboard from "./pages/Dashboard";
 import Picks from "./pages/Picks";
@@ -32,6 +35,7 @@ export default function App() {
 
   // Leaderboard (computed on demand, shared with Dashboard + Leaderboard page)
   const [leaderboard, setLeaderboard] = useState([]);
+  const [leaderboardHistory, setLeaderboardHistory] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
   // Admin UI state
@@ -87,11 +91,15 @@ export default function App() {
   // ── LEADERBOARD ──
   const loadLeaderboard = useCallback(async () => {
     setLeaderboardLoading(true);
-    const [pm, pg, pk, pkm] = await Promise.all([
+    const [pm, pg, pk, pkm, rm, rg, rk, rs] = await Promise.all([
       supabase.from("match_predictions").select("*"),
       supabase.from("group_ranking_predictions").select("*"),
       supabase.from("knockout_predictions").select("*"),
       supabase.from("ko_match_predictions").select("*"),
+      supabase.from("actual_results").select("*"),
+      supabase.from("actual_group_rankings").select("*"),
+      supabase.from("actual_knockout").select("*"),
+      supabase.from("ko_actual_scores").select("*"),
     ]);
     const scores = PLAYERS.map(name => {
       const preds = { matches: {}, groupTopThree: {}, r32: null, r16: null, qf: null, sfRanking: null, koMatches: {} };
@@ -119,6 +127,192 @@ export default function App() {
     });
     scores.sort((a, b) => b.total - a.total);
     setLeaderboard(scores);
+
+    // ── SCORE HISTORY EVOLUTION ──
+    const parseUpdatedAt = (val, fallback) => {
+      if (!val) return new Date(fallback).getTime();
+      const t = new Date(val).getTime();
+      return isNaN(t) ? new Date(fallback).getTime() : t;
+    };
+
+    const playerPredictions = {};
+    PLAYERS.forEach(name => {
+      const preds = { matches: {}, groupTopThree: {}, r32: null, r16: null, qf: null, sfRanking: null, koMatches: {} };
+      (pm.data || []).filter(r => r.player_name === name).forEach(r => (preds.matches[r.match_id] = r));
+      (pg.data || []).filter(r => r.player_name === name).forEach(r => {
+        if (Array.isArray(r.ranking))
+          preds.groupTopThree[r.group_id] = { first: r.ranking[0] || "", second: r.ranking[1] || "", third: r.ranking[2] || "" };
+      });
+      (pk.data || []).filter(r => r.player_name === name).forEach(r => {
+        if (r.round === "R32") preds.r32 = r.teams;
+        if (r.round === "R16") preds.r16 = r.teams;
+        if (r.round === "QF") preds.qf = r.teams;
+        if (r.round === "SF_RANK") preds.sfRanking = r.teams;
+      });
+      (pkm.data || []).filter(r => r.player_name === name).forEach(r => {
+        if (!preds.koMatches[r.round]) preds.koMatches[r.round] = [];
+        preds.koMatches[r.round][r.game_index] = { home_score: r.home_score, away_score: r.away_score };
+      });
+      playerPredictions[name] = preds;
+    });
+
+    const events = [];
+
+    // 1. Group matches from actual_results
+    (rm.data || []).forEach(r => {
+      if (r.home_score != null && r.away_score != null) {
+        const m = GROUP_MATCHES.find(x => x.id === r.match_id);
+        const fallbackDate = m ? `2026-${m.date.split('/')[0].padStart(2, '0')}-${m.date.split('/')[1].padStart(2, '0')}T${m.time}:00` : '2026-06-11T00:00:00Z';
+        events.push({
+          id: `match_${r.match_id}`,
+          type: 'match',
+          match_id: r.match_id,
+          home_score: r.home_score,
+          away_score: r.away_score,
+          updated_at: parseUpdatedAt(r.updated_at, fallbackDate),
+          label: `Match ${r.match_id} (${r.home_score}-${r.away_score})`,
+          detail: `Group ${m?.group || ''}: ${r.home_score} - ${r.away_score}`
+        });
+      }
+    });
+
+    // 2. Knockout matches from ko_actual_scores
+    (rs.data || []).forEach(r => {
+      if (r.home_score != null && r.away_score != null) {
+        const roundObj = KO_ROUNDS.find(x => x.id === r.round);
+        const fallbackDate = roundObj ? roundObj.deadline : '2026-06-28T00:00:00Z';
+        events.push({
+          id: `ko_match_${r.round}_${r.game_index}`,
+          type: 'ko_match',
+          round: r.round,
+          game_index: r.game_index,
+          home_score: r.home_score,
+          away_score: r.away_score,
+          updated_at: parseUpdatedAt(r.updated_at, fallbackDate),
+          label: `${r.round} Match ${r.game_index + 1} (${r.home_score}-${r.away_score})`,
+          detail: `${roundObj?.label || r.round}: Game ${r.game_index + 1}`
+        });
+      }
+    });
+
+    // 3. Group rankings from actual_group_rankings
+    (rg.data || []).forEach(r => {
+      if (Array.isArray(r.ranking) && r.ranking.length > 0) {
+        events.push({
+          id: `group_ranking_${r.group_id}`,
+          type: 'group_ranking',
+          group_id: r.group_id,
+          ranking: r.ranking,
+          updated_at: parseUpdatedAt(r.updated_at, '2026-06-25T00:00:00Z'),
+          label: `Group ${r.group_id} Ranking`,
+          detail: `Group ${r.group_id} final ranking decided`
+        });
+      }
+    });
+
+    // 4. Knockout qualifiers from actual_knockout
+    (rk.data || []).forEach(r => {
+      if (Array.isArray(r.teams) && r.teams.length > 0) {
+        const roundObj = KO_ROUNDS.find(x => x.id === r.round);
+        const fallbackDate = roundObj ? roundObj.deadline : '2026-06-28T00:00:00Z';
+        events.push({
+          id: `knockout_${r.round}`,
+          type: 'knockout',
+          round: r.round,
+          teams: r.teams,
+          updated_at: parseUpdatedAt(r.updated_at, fallbackDate),
+          label: `${r.round} Teams`,
+          detail: `${roundObj?.label || r.round} teams verified`
+        });
+      }
+    });
+
+    events.sort((a, b) => a.updated_at - b.updated_at);
+
+    const milestones = [];
+    let currentMilestone = null;
+
+    events.forEach(e => {
+      if (!currentMilestone || Math.abs(e.updated_at - currentMilestone.timestamp) > 5 * 60 * 1000) { // 5 minutes window
+        currentMilestone = {
+          timestamp: e.updated_at,
+          events: [e],
+          label: e.label,
+          details: [e.detail || e.label]
+        };
+        milestones.push(currentMilestone);
+      } else {
+        currentMilestone.events.push(e);
+        currentMilestone.details.push(e.detail || e.label);
+        if (currentMilestone.events.length === 2) {
+          currentMilestone.label = `${currentMilestone.events[0].label.split(' (')[0]} & ${e.label.split(' (')[0]}`;
+        } else if (currentMilestone.events.length > 2) {
+          currentMilestone.label = `${currentMilestone.events[0].label.split(' (')[0]} + ${currentMilestone.events.length - 1} more`;
+        }
+      }
+    });
+
+    const getEventPoints = (playerPreds, event) => {
+      if (event.type === 'match') {
+        const pred = playerPreds.matches?.[event.match_id];
+        return scoreMatch(pred, event).total;
+      }
+      if (event.type === 'ko_match') {
+        const pred = playerPreds.koMatches?.[event.round]?.[event.game_index];
+        return scoreMatch(pred, event).total;
+      }
+      if (event.type === 'group_ranking') {
+        const pred = playerPreds.groupTopThree?.[event.group_id];
+        const actual = {
+          first: event.ranking[0] || "",
+          second: event.ranking[1] || "",
+          third: event.ranking[2] || ""
+        };
+        return scoreGroupTopThree(pred, actual);
+      }
+      if (event.type === 'knockout') {
+        if (event.round === 'R32') return scoreKOQualifiers(playerPreds.r32, event.teams, 10);
+        if (event.round === 'R16') return scoreKOQualifiers(playerPreds.r16, event.teams, 15);
+        if (event.round === 'QF') return scoreKOQualifiers(playerPreds.qf, event.teams, 20);
+        if (event.round === 'SF_RANK') return scoreSFRanking(playerPreds.sfRanking, event.teams);
+      }
+      return 0;
+    };
+
+    const history = [];
+    const initialScores = {};
+    PLAYERS.forEach(name => {
+      initialScores[name] = 0;
+    });
+
+    history.push({
+      timestamp: 0,
+      label: "Start",
+      details: ["Tournament begins!"],
+      scores: initialScores
+    });
+
+    const currentScores = { ...initialScores };
+    milestones.forEach(m => {
+      const milestoneScores = {};
+      PLAYERS.forEach(name => {
+        let milestonePts = 0;
+        const preds = playerPredictions[name];
+        m.events.forEach(e => {
+          milestonePts += getEventPoints(preds, e);
+        });
+        currentScores[name] += milestonePts;
+        milestoneScores[name] = currentScores[name];
+      });
+      history.push({
+        timestamp: m.timestamp,
+        label: m.label,
+        details: m.details,
+        scores: milestoneScores
+      });
+    });
+
+    setLeaderboardHistory(history);
     setLeaderboardLoading(false);
   }, [actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank, koActualScores]);
 
@@ -349,6 +543,7 @@ export default function App() {
         {view === "leaderboard" && (
           <Leaderboard
             leaderboard={leaderboard}
+            history={leaderboardHistory}
             loading={leaderboardLoading}
             onRefresh={loadLeaderboard}
           />
