@@ -39,8 +39,16 @@ export default function App() {
   const [leaderboardHistory, setLeaderboardHistory] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
-  // Picks reveal — true once global deadline passes OR all players have submitted
+  // Picks reveal — true once global deadline passes AND all players have fully submitted
   const [allPicksRevealed, setAllPicksRevealed] = useState(() => isPast(GLOBAL_DEADLINE));
+
+  // Messages (for logged-in non-admin player)
+  const [messages, setMessages] = useState([]);
+
+  // Admin nudge tab state
+  const [nudgeData, setNudgeData] = useState(null);
+  const [nudgeLoading, setNudgeLoading] = useState(false);
+  const [nudgeSent, setNudgeSent] = useState({});
 
   // Admin UI state
   const [adminTab, setAdminTab] = useState("fixtures");
@@ -93,11 +101,30 @@ export default function App() {
   useEffect(() => { loadActuals(); }, [loadActuals]);
 
   // ── PICKS REVEAL CHECK ──
+  // Requires global deadline passed AND all players have completed all three prediction tables:
+  // - All 72 group match scores (match_predictions)
+  // - All 12 group rankings (group_ranking_predictions)
+  // - All 4 KO qualifier rounds: R32, R16, QF, SF_RANK (knockout_predictions)
   const checkPicksRevealed = useCallback(async () => {
-    if (isPast(GLOBAL_DEADLINE)) { setAllPicksRevealed(true); return; }
-    const { data } = await supabase.from("match_predictions").select("player_name");
-    const submitted = new Set((data || []).map(r => r.player_name));
-    setAllPicksRevealed(PLAYERS.every(p => submitted.has(p)));
+    if (!isPast(GLOBAL_DEADLINE)) { setAllPicksRevealed(false); return; }
+    const [pm, pg, pk] = await Promise.all([
+      supabase.from("match_predictions").select("player_name, home_score, away_score"),
+      supabase.from("group_ranking_predictions").select("player_name, group_id, ranking"),
+      supabase.from("knockout_predictions").select("player_name, round"),
+    ]);
+    const complete = PLAYERS.every(name => {
+      const matchCount = (pm.data || []).filter(r =>
+        r.player_name === name && r.home_score != null && r.away_score != null
+      ).length;
+      if (matchCount < GROUP_MATCHES.length) return false;
+      const groupCount = (pg.data || []).filter(r =>
+        r.player_name === name && Array.isArray(r.ranking) && r.ranking.filter(Boolean).length >= 3
+      ).length;
+      if (groupCount < Object.keys(GROUPS).length) return false;
+      const koRounds = new Set((pk.data || []).filter(r => r.player_name === name).map(r => r.round));
+      return ["R32", "R16", "QF", "SF_RANK"].every(r => koRounds.has(r));
+    });
+    setAllPicksRevealed(complete);
   }, []);
 
   useEffect(() => {
@@ -332,6 +359,64 @@ export default function App() {
     setLeaderboardLoading(false);
   }, [actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank, koActualScores]);
 
+  // ── MESSAGES ──
+  const loadMessages = useCallback(async (playerName) => {
+    const { data } = await supabase.from("messages").select("*")
+      .eq("to_player", playerName).order("created_at", { ascending: false });
+    setMessages(data || []);
+  }, []);
+
+  async function markMessageRead(id) {
+    await supabase.from("messages").update({ read: true }).eq("id", id);
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, read: true } : m));
+  }
+
+  // ── ADMIN NUDGE ──
+  const loadNudgeData = useCallback(async () => {
+    setNudgeLoading(true);
+    const [pm, pg, pk] = await Promise.all([
+      supabase.from("match_predictions").select("player_name, home_score, away_score"),
+      supabase.from("group_ranking_predictions").select("player_name, group_id, ranking"),
+      supabase.from("knockout_predictions").select("player_name, round, teams"),
+    ]);
+    const data = PLAYERS.map(name => {
+      const matchDone = (pm.data || []).filter(r =>
+        r.player_name === name && r.home_score != null && r.away_score != null
+      ).length;
+      const groupDone = (pg.data || []).filter(r =>
+        r.player_name === name && Array.isArray(r.ranking) && r.ranking.filter(Boolean).length >= 3
+      ).length;
+      const koRounds = new Set((pk.data || []).filter(r => r.player_name === name).map(r => r.round));
+      return {
+        name,
+        groupScores: { done: matchDone, total: GROUP_MATCHES.length },
+        groupRankings: { done: groupDone, total: Object.keys(GROUPS).length },
+        r32: koRounds.has("R32"),
+        r16: koRounds.has("R16"),
+        qf: koRounds.has("QF"),
+        sf: koRounds.has("SF_RANK"),
+      };
+    });
+    setNudgeData(data);
+    setNudgeLoading(false);
+  }, []);
+
+  async function sendNudge(playerData) {
+    const missing = [];
+    if (playerData.groupScores.done < playerData.groupScores.total)
+      missing.push(`Group Scores (${playerData.groupScores.done}/${playerData.groupScores.total} done)`);
+    if (playerData.groupRankings.done < playerData.groupRankings.total)
+      missing.push(`Group Rankings (${playerData.groupRankings.done}/${playerData.groupRankings.total} done)`);
+    if (!playerData.r32) missing.push("R32 qualifier picks");
+    if (!playerData.r16) missing.push("R16 qualifier picks");
+    if (!playerData.qf) missing.push("QF qualifier picks");
+    if (!playerData.sf) missing.push("Final ranking pick");
+    if (missing.length === 0) return;
+    const body = `Hi ${playerData.name}! Friendly reminder to complete your predictions before 10 June 23:59 (Portugal time). Still missing: ${missing.join(", ")}. Good luck! 🏆`;
+    await supabase.from("messages").insert({ to_player: playerData.name, body });
+    setNudgeSent(prev => ({ ...prev, [playerData.name]: true }));
+  }
+
   // ── LOGIN ──
   const signIn = useCallback(async (name, password) => {
     const { data, error } = await supabase
@@ -344,8 +429,8 @@ export default function App() {
       setView("admin");
     } else {
       setView("dashboard");
-      // Load leaderboard in background so Dashboard has data right away
       loadLeaderboard();
+      loadMessages(data.name);
     }
     return true;
   }, [loadLeaderboard]);
@@ -553,6 +638,8 @@ export default function App() {
             leaderboard={leaderboard}
             leaderboardLoading={leaderboardLoading}
             onNavigate={navigateTo}
+            messages={messages}
+            onMarkRead={markMessageRead}
           />
         )}
 
@@ -589,6 +676,7 @@ export default function App() {
         {/* ALL PREDICTIONS */}
         {view === "predictions" && allPicksRevealed && (
           <AllPredictions
+            player={player?.is_admin ? null : player?.name}
             actualMatches={actualMatches}
             actualGroupTopThree={actualGroupTopThree}
             actualR32={actualR32}
@@ -641,11 +729,15 @@ export default function App() {
                 ["groups", "📊 Group Top 3"],
                 ["ko_results", "🏆 KO Results"],
                 ["qualifiers", "👥 Qualifiers"],
+                ["nudge", "📬 Nudge Players"],
               ].map(([k, l]) => (
                 <button
                   key={k}
                   className={`tab ${adminTab === k ? "active" : ""}`}
-                  onClick={() => setAdminTab(k)}
+                  onClick={() => {
+                    setAdminTab(k);
+                    if (k === "nudge" && !nudgeData) loadNudgeData();
+                  }}
                 >
                   {l}
                 </button>
@@ -831,6 +923,76 @@ export default function App() {
                   </div>
                 </div>
               </>
+            )}
+
+            {/* NUDGE PLAYERS */}
+            {adminTab === "nudge" && (
+              <div className="card">
+                <div className="card-label">Prediction completion status — send reminder messages to players with gaps</div>
+                <div style={{ marginBottom: 12 }}>
+                  <button className="tab" onClick={loadNudgeData} disabled={nudgeLoading}>
+                    {nudgeLoading ? "Loading…" : "🔄 Refresh"}
+                  </button>
+                </div>
+                {nudgeLoading ? (
+                  <div className="spinner">Loading completion data…</div>
+                ) : nudgeData ? (
+                  <table className="deadline-table" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th>Player</th>
+                        <th>Group Scores</th>
+                        <th>Group Rankings</th>
+                        <th>R32</th>
+                        <th>R16</th>
+                        <th>QF</th>
+                        <th>SF/Final</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {nudgeData.map(p => {
+                        const allDone = p.groupScores.done >= p.groupScores.total
+                          && p.groupRankings.done >= p.groupRankings.total
+                          && p.r32 && p.r16 && p.qf && p.sf;
+                        const tick = v => v ? "✅" : "❌";
+                        return (
+                          <tr key={p.name}>
+                            <td style={{ fontWeight: 700 }}>{p.name}</td>
+                            <td className={p.groupScores.done >= p.groupScores.total ? "open" : "past"}>
+                              {p.groupScores.done}/{p.groupScores.total}
+                            </td>
+                            <td className={p.groupRankings.done >= p.groupRankings.total ? "open" : "past"}>
+                              {p.groupRankings.done}/{p.groupRankings.total}
+                            </td>
+                            <td>{tick(p.r32)}</td>
+                            <td>{tick(p.r16)}</td>
+                            <td>{tick(p.qf)}</td>
+                            <td>{tick(p.sf)}</td>
+                            <td>
+                              {allDone ? (
+                                <span style={{ color: "#4caf80", fontSize: 12 }}>All done ✓</span>
+                              ) : nudgeSent[p.name] ? (
+                                <span style={{ color: "#f0c030", fontSize: 12 }}>Sent ✓</span>
+                              ) : (
+                                <button
+                                  className="tab"
+                                  style={{ fontSize: 11, padding: "3px 10px" }}
+                                  onClick={() => sendNudge(p)}
+                                >
+                                  📬 Nudge
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div style={{ color: "var(--text-dark)" }}>Click Refresh to load status.</div>
+                )}
+              </div>
             )}
 
             <div className="save-row">

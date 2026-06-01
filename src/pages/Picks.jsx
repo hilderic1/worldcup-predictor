@@ -261,83 +261,126 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
           )}
 
           {/* R32 QUALIFIERS */}
-          {predictTab === "r32" && (
-            <div className="card">
-              <div className="card-label">All 32 R32 qualifiers — 10pts per correct team — locked at global deadline</div>
-              <div className="ko-grid">
-                {Array(32).fill(0).map((_, i) => (
-                  <select
-                    key={i} className="rank-sel" disabled={globalLocked}
-                    value={r32Pred[i] || ""}
-                    onChange={e => { const u = [...r32Pred]; u[i] = e.target.value; setR32Pred(u); }}
-                  >
-                    <option value="">— pick {i + 1} —</option>
-                    {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                  </select>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* R16 QUALIFIERS */}
-          {predictTab === "r16" && (
-            <div className="card">
-              <div className="card-label">16 R16 qualifiers — 15pts per correct team — locked at global deadline</div>
-              <div className="ko-grid">
-                {Array(16).fill(0).map((_, i) => (
-                  <select
-                    key={i} className="rank-sel" disabled={globalLocked}
-                    value={r16Pred[i] || ""}
-                    onChange={e => { const u = [...r16Pred]; u[i] = e.target.value; setR16Pred(u); }}
-                  >
-                    <option value="">— pick {i + 1} —</option>
-                    {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                  </select>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* QF QUALIFIERS */}
-          {predictTab === "qf" && (
-            <div className="card">
-              <div className="card-label">8 Quarter-Finalists — 20pts per correct team — locked at global deadline</div>
-              <div className="ko-grid">
-                {Array(8).fill(0).map((_, i) => (
-                  <select
-                    key={i} className="rank-sel" disabled={globalLocked}
-                    value={qfPred[i] || ""}
-                    onChange={e => { const u = [...qfPred]; u[i] = e.target.value; setQfPred(u); }}
-                  >
-                    <option value="">— pick {i + 1} —</option>
-                    {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                  </select>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* FINAL RANKING */}
-          {predictTab === "sf" && (
-            <div className="card">
-              <div className="card-label">Final standings 1st–4th — 25pts per team + 5pts correct rank — locked at global deadline</div>
-              <div className="sf-list">
-                {FINAL_RANKS.map((label, i) => (
-                  <div key={i} className="sf-row">
-                    <div className="sf-rank-label">{label}</div>
+          {predictTab === "r32" && (() => {
+            const dupes = new Set(r32Pred.filter((t, i) => t && r32Pred.indexOf(t) !== i));
+            return (
+              <div className="card">
+                <div className="card-label">All 32 R32 qualifiers — 10pts per correct team — locked at global deadline</div>
+                {dupes.size > 0 && (
+                  <div className="notice warn" style={{ marginBottom: 12 }}>
+                    ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
+                  </div>
+                )}
+                <div className="ko-grid">
+                  {Array(32).fill(0).map((_, i) => (
                     <select
-                      className="rank-sel" style={{ maxWidth: 220 }} disabled={globalLocked}
-                      value={sfRankPred[i] || ""}
-                      onChange={e => { const u = [...sfRankPred]; u[i] = e.target.value; setSfRankPred(u); }}
+                      key={i}
+                      className="rank-sel"
+                      disabled={globalLocked}
+                      value={r32Pred[i] || ""}
+                      style={dupes.has(r32Pred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
+                      onChange={e => { const u = [...r32Pred]; u[i] = e.target.value; setR32Pred(u); }}
                     >
-                      <option value="">— pick team —</option>
+                      <option value="">— pick {i + 1} —</option>
                       {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
                     </select>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
+
+          {/* R16 QUALIFIERS */}
+          {predictTab === "r16" && (() => {
+            const dupes = new Set(r16Pred.filter((t, i) => t && r16Pred.indexOf(t) !== i));
+            return (
+              <div className="card">
+                <div className="card-label">16 R16 qualifiers — 15pts per correct team — locked at global deadline</div>
+                {dupes.size > 0 && (
+                  <div className="notice warn" style={{ marginBottom: 12 }}>
+                    ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
+                  </div>
+                )}
+                <div className="ko-grid">
+                  {Array(16).fill(0).map((_, i) => (
+                    <select
+                      key={i}
+                      className="rank-sel"
+                      disabled={globalLocked}
+                      value={r16Pred[i] || ""}
+                      style={dupes.has(r16Pred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
+                      onChange={e => { const u = [...r16Pred]; u[i] = e.target.value; setR16Pred(u); }}
+                    >
+                      <option value="">— pick {i + 1} —</option>
+                      {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                    </select>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* QF QUALIFIERS */}
+          {predictTab === "qf" && (() => {
+            const dupes = new Set(qfPred.filter((t, i) => t && qfPred.indexOf(t) !== i));
+            return (
+              <div className="card">
+                <div className="card-label">8 Quarter-Finalists — 20pts per correct team — locked at global deadline</div>
+                {dupes.size > 0 && (
+                  <div className="notice warn" style={{ marginBottom: 12 }}>
+                    ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
+                  </div>
+                )}
+                <div className="ko-grid">
+                  {Array(8).fill(0).map((_, i) => (
+                    <select
+                      key={i}
+                      className="rank-sel"
+                      disabled={globalLocked}
+                      value={qfPred[i] || ""}
+                      style={dupes.has(qfPred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
+                      onChange={e => { const u = [...qfPred]; u[i] = e.target.value; setQfPred(u); }}
+                    >
+                      <option value="">— pick {i + 1} —</option>
+                      {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                    </select>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* FINAL RANKING */}
+          {predictTab === "sf" && (() => {
+            const dupes = new Set(sfRankPred.filter((t, i) => t && sfRankPred.indexOf(t) !== i));
+            return (
+              <div className="card">
+                <div className="card-label">Final standings 1st–4th — 25pts per team + 5pts correct rank — locked at global deadline</div>
+                {dupes.size > 0 && (
+                  <div className="notice warn" style={{ marginBottom: 12 }}>
+                    ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
+                  </div>
+                )}
+                <div className="sf-list">
+                  {FINAL_RANKS.map((label, i) => (
+                    <div key={i} className="sf-row">
+                      <div className="sf-rank-label">{label}</div>
+                      <select
+                        className="rank-sel"
+                        style={{ maxWidth: 220, ...(dupes.has(sfRankPred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}) }}
+                        disabled={globalLocked}
+                        value={sfRankPred[i] || ""}
+                        onChange={e => { const u = [...sfRankPred]; u[i] = e.target.value; setSfRankPred(u); }}
+                      >
+                        <option value="">— pick team —</option>
+                        {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* KO ROUND MATCH SCORES */}
           {KO_ROUNDS.map(r => predictTab === `ko_${r.id}` && (

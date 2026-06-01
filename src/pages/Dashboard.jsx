@@ -18,7 +18,7 @@ function ordinal(n) {
   return `${n}th`;
 }
 
-export default function Dashboard({ player, leaderboard, leaderboardLoading, onNavigate }) {
+export default function Dashboard({ player, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead }) {
   const openRound = currentOpenRound();
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
@@ -32,8 +32,29 @@ export default function Dashboard({ player, leaderboard, leaderboardLoading, onN
       ? { label: `${KO_ROUNDS.find(r => !isPast(r.deadline)).label} deadline`, date: KO_ROUNDS.find(r => !isPast(r.deadline)).deadline }
       : null;
 
+  const unread = (messages || []).filter(m => !m.read);
+
   return (
     <div>
+      {/* Admin messages */}
+      {unread.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          {unread.map(m => (
+            <div key={m.id} className="notice amber" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div>
+                <strong>📬 Message from Admin:</strong> {m.body}
+              </div>
+              <button
+                style={{ flexShrink: 0, fontSize: 11, padding: "2px 10px", cursor: "pointer" }}
+                onClick={() => onMarkRead(m.id)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Hero */}
       <div className="dashboard-hero">
         <div className="dashboard-hero-left">
