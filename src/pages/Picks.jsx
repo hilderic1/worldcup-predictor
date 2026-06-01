@@ -31,8 +31,11 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
       supabase.from("knockout_predictions").select("*").eq("player_name", player.name),
       supabase.from("ko_match_predictions").select("*").eq("player_name", player.name),
     ]);
+    // Pre-fill every match with 1-0 so unfilled predictions default to a home-win (10 pts)
+    // rather than showing 0 pts and inflating the score when nothing is entered
     const mp = {};
-    (pm.data || []).forEach(r => (mp[r.match_id] = r));
+    GROUP_MATCHES.forEach(m => { mp[m.id] = { home_score: 10, away_score: 10 }; });
+    (pm.data || []).forEach(r => (mp[r.match_id] = { ...mp[r.match_id], ...r }));
     setMatchPreds(mp);
 
     const gt = {};

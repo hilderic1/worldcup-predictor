@@ -121,8 +121,11 @@ export default function App() {
         r.player_name === name && Array.isArray(r.ranking) && r.ranking.filter(Boolean).length >= 3
       ).length;
       if (groupCount < Object.keys(GROUPS).length) return false;
-      const koRounds = new Set((pk.data || []).filter(r => r.player_name === name).map(r => r.round));
-      return ["R32", "R16", "QF", "SF_RANK"].every(r => koRounds.has(r));
+      const koMap = {};
+      (pk.data || []).filter(r => r.player_name === name).forEach(r => {
+        koMap[r.round] = (r.teams || []).filter(Boolean).length;
+      });
+      return koMap["R32"] >= 32 && koMap["R16"] >= 16 && koMap["QF"] >= 8 && koMap["SF_RANK"] >= 4;
     });
     setAllPicksRevealed(complete);
   }, []);
@@ -386,15 +389,18 @@ export default function App() {
       const groupDone = (pg.data || []).filter(r =>
         r.player_name === name && Array.isArray(r.ranking) && r.ranking.filter(Boolean).length >= 3
       ).length;
-      const koRounds = new Set((pk.data || []).filter(r => r.player_name === name).map(r => r.round));
+      const koMap = {};
+      (pk.data || []).filter(r => r.player_name === name).forEach(r => {
+        koMap[r.round] = (r.teams || []).filter(Boolean).length;
+      });
       return {
         name,
         groupScores: { done: matchDone, total: GROUP_MATCHES.length },
         groupRankings: { done: groupDone, total: Object.keys(GROUPS).length },
-        r32: koRounds.has("R32"),
-        r16: koRounds.has("R16"),
-        qf: koRounds.has("QF"),
-        sf: koRounds.has("SF_RANK"),
+        r32: { done: koMap["R32"] || 0, total: 32 },
+        r16: { done: koMap["R16"] || 0, total: 16 },
+        qf:  { done: koMap["QF"]  || 0, total: 8 },
+        sf:  { done: koMap["SF_RANK"] || 0, total: 4 },
       };
     });
     setNudgeData(data);
@@ -407,10 +413,14 @@ export default function App() {
       missing.push(`Group Scores (${playerData.groupScores.done}/${playerData.groupScores.total} done)`);
     if (playerData.groupRankings.done < playerData.groupRankings.total)
       missing.push(`Group Rankings (${playerData.groupRankings.done}/${playerData.groupRankings.total} done)`);
-    if (!playerData.r32) missing.push("R32 qualifier picks");
-    if (!playerData.r16) missing.push("R16 qualifier picks");
-    if (!playerData.qf) missing.push("QF qualifier picks");
-    if (!playerData.sf) missing.push("Final ranking pick");
+    if (playerData.r32.done < playerData.r32.total)
+      missing.push(`R32 qualifier picks (${playerData.r32.done}/${playerData.r32.total} done)`);
+    if (playerData.r16.done < playerData.r16.total)
+      missing.push(`R16 qualifier picks (${playerData.r16.done}/${playerData.r16.total} done)`);
+    if (playerData.qf.done < playerData.qf.total)
+      missing.push(`QF qualifier picks (${playerData.qf.done}/${playerData.qf.total} done)`);
+    if (playerData.sf.done < playerData.sf.total)
+      missing.push(`Final ranking pick (${playerData.sf.done}/${playerData.sf.total} done)`);
     if (missing.length === 0) return;
     const body = `Hi ${playerData.name}! Friendly reminder to complete your predictions before 10 June 23:59 (Portugal time). Still missing: ${missing.join(", ")}. Good luck! 🏆`;
     await supabase.from("messages").insert({ to_player: playerData.name, body });
@@ -954,21 +964,28 @@ export default function App() {
                       {nudgeData.map(p => {
                         const allDone = p.groupScores.done >= p.groupScores.total
                           && p.groupRankings.done >= p.groupRankings.total
-                          && p.r32 && p.r16 && p.qf && p.sf;
-                        const tick = v => v ? "✅" : "❌";
+                          && p.r32.done >= p.r32.total
+                          && p.r16.done >= p.r16.total
+                          && p.qf.done >= p.qf.total
+                          && p.sf.done >= p.sf.total;
+                        const cell = ({ done, total }) => (
+                          <td className={done >= total ? "open" : done > 0 ? "" : "past"}>
+                            {done}/{total}
+                          </td>
+                        );
                         return (
                           <tr key={p.name}>
                             <td style={{ fontWeight: 700 }}>{p.name}</td>
-                            <td className={p.groupScores.done >= p.groupScores.total ? "open" : "past"}>
+                            <td className={p.groupScores.done >= p.groupScores.total ? "open" : p.groupScores.done > 0 ? "" : "past"}>
                               {p.groupScores.done}/{p.groupScores.total}
                             </td>
-                            <td className={p.groupRankings.done >= p.groupRankings.total ? "open" : "past"}>
+                            <td className={p.groupRankings.done >= p.groupRankings.total ? "open" : p.groupRankings.done > 0 ? "" : "past"}>
                               {p.groupRankings.done}/{p.groupRankings.total}
                             </td>
-                            <td>{tick(p.r32)}</td>
-                            <td>{tick(p.r16)}</td>
-                            <td>{tick(p.qf)}</td>
-                            <td>{tick(p.sf)}</td>
+                            {cell(p.r32)}
+                            {cell(p.r16)}
+                            {cell(p.qf)}
+                            {cell(p.sf)}
                             <td>
                               {allDone ? (
                                 <span style={{ color: "#4caf80", fontSize: 12 }}>All done ✓</span>
