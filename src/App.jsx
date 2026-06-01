@@ -114,7 +114,9 @@ export default function App() {
     ]);
     const complete = PLAYERS.every(name => {
       const matchCount = (pm.data || []).filter(r =>
-        r.player_name === name && r.home_score != null && r.away_score != null
+        r.player_name === name &&
+        r.home_score !== null && r.away_score !== null &&
+        !(+r.home_score === 10 && +r.away_score === 10)
       ).length;
       if (matchCount < GROUP_MATCHES.length) return false;
       const groupCount = (pg.data || []).filter(r =>
@@ -384,7 +386,9 @@ export default function App() {
     ]);
     const data = PLAYERS.map(name => {
       const matchDone = (pm.data || []).filter(r =>
-        r.player_name === name && r.home_score != null && r.away_score != null
+        r.player_name === name &&
+        r.home_score !== null && r.away_score !== null &&
+        !(+r.home_score === 10 && +r.away_score === 10)
       ).length;
       const groupDone = (pg.data || []).filter(r =>
         r.player_name === name && Array.isArray(r.ranking) && r.ranking.filter(Boolean).length >= 3
