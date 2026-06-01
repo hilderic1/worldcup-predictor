@@ -18,7 +18,7 @@ function ordinal(n) {
   return `${n}th`;
 }
 
-export default function Dashboard({ player, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead }) {
+export default function Dashboard({ player, lastLogin, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead }) {
   const openRound = currentOpenRound();
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
@@ -60,6 +60,15 @@ export default function Dashboard({ player, leaderboard, leaderboardLoading, onN
         <div className="dashboard-hero-left">
           <div className="dashboard-greeting">Welcome back,</div>
           <div className="dashboard-player-name">{player?.name}</div>
+          {lastLogin && (
+            <div style={{ fontSize: 11, color: "var(--text-dark)", marginTop: 4 }}>
+              Last login:{" "}
+              {new Date(lastLogin).toLocaleString("en-GB", {
+                day: "numeric", month: "short", year: "numeric",
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </div>
+          )}
           {openRound === "GROUP" && !globalLocked && (
             <div className="dashboard-status open">🟢 Group stage — predictions open</div>
           )}

@@ -437,6 +437,8 @@ export default function App() {
       .from("players").select("*")
       .eq("name", name).eq("password_hash", password).single();
     if (error || !data) return false;
+    // Stamp the new login time; the previous value (data.last_login) is shown to the user
+    await supabase.from("players").update({ last_login: new Date().toISOString() }).eq("name", name);
     localStorage.setItem(SESSION_KEY, JSON.stringify({ name, password }));
     setPlayer(data);
     if (data.is_admin) {
@@ -649,6 +651,7 @@ export default function App() {
         {view === "dashboard" && player && !player.is_admin && (
           <Dashboard
             player={player}
+            lastLogin={player.last_login}
             leaderboard={leaderboard}
             leaderboardLoading={leaderboardLoading}
             onNavigate={navigateTo}
