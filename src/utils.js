@@ -7,6 +7,9 @@ export function scoreMatch(pred, actual) {
   const ah = +actual.home_score, aa = +actual.away_score;
   if (isNaN(ph) || isNaN(pa) || isNaN(ah) || isNaN(aa))
     return { total: 0, result: 0, accuracy: 0, exact: 0 };
+  // 10-10 is the default sentinel — always scores 0
+  if (ph === 10 && pa === 10)
+    return { total: 0, result: 0, accuracy: 0, exact: 0 };
   const pRes = ph > pa ? "H" : ph < pa ? "A" : "D";
   const aRes = ah > aa ? "H" : ah < aa ? "A" : "D";
   const result = pRes === aRes ? 10 : 0;
