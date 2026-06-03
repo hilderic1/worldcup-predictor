@@ -188,15 +188,31 @@ function buildR32Bracket(groupStandings, matchPreds) {
     b.gd     !== a.gd     ? b.gd     - a.gd     :
     b.gf     !== a.gf     ? b.gf     - a.gf     : 0
   );
-  const best8     = thirds.slice(0, 8);
-  const qualGrps  = best8.map(t => t.grp).sort().join("");
-  const colAssign = FIFA_TABLE[qualGrps] || null; // [col0..col7], each = source group letter
+  const best8    = thirds.slice(0, 8);
+  const qualGrps = best8.map(t => t.grp).sort().join("");
+  const colAssign = FIFA_TABLE[qualGrps] || null;
 
   // Build 3rd-place team lookup: sourceGroup → team name
   const thirdByGrp = {};
   best8.forEach(t => { thirdByGrp[t.grp] = t.team; });
 
-  // Check for colour-tied 3rds (tied on all criteria, we know some may be uncertain)
+  // ── Border tie: 8th and 9th 3rd-place teams tied on all available criteria ──
+  // In that case we don't know which group qualifies, so we compute BOTH possible
+  // table lookups and show both candidate teams for any slot that differs.
+  let colAssignAlt = null;
+  const altThirdByGrp = {};
+  const t8 = thirds[7], t9 = thirds[8];
+  const borderTied = !!(t8 && t9 &&
+    t8.points === t9.points && t8.gd === t9.gd && t8.gf === t9.gf);
+  if (borderTied) {
+    // Scenario B: swap 8th group for 9th group
+    const best8B   = [...best8.slice(0, 7), t9];
+    const qualGrpsB = best8B.map(t => t.grp).sort().join("");
+    colAssignAlt   = FIFA_TABLE[qualGrpsB] || null;
+    best8B.forEach(t => { altThirdByGrp[t.grp] = t.team; });
+  }
+
+  // Colour-tied teams within the confirmed best 8 (tied on all criteria but both qualify)
   const tiedThirds = new Set();
   for (let i = 0; i < best8.length - 1; i++) {
     const a = best8[i], b = best8[i + 1];
@@ -210,10 +226,20 @@ function buildR32Bracket(groupStandings, matchPreds) {
     if (slot.type === "R") return { team: pos[slot.grp]?.R || "?", label: `2${slot.grp}` };
     if (slot.type === "3") {
       if (!colAssign) return { team: "?", label: "3rd ?" };
-      const srcGrp = colAssign[slot.col];
-      const team   = thirdByGrp[srcGrp] || "?";
-      const tied   = tiedThirds.has(srcGrp);
-      return { team, label: `3${srcGrp}`, tied };
+      const srcGrp  = colAssign[slot.col];
+      const team    = thirdByGrp[srcGrp] || "?";
+      const tied    = tiedThirds.has(srcGrp);
+      const result  = { team, label: `3${srcGrp}`, tied };
+
+      // Border tie: check if the alternate scenario puts a different team here
+      if (borderTied && colAssignAlt) {
+        const altSrcGrp = colAssignAlt[slot.col];
+        if (altSrcGrp !== srcGrp) {
+          result.altTeam  = altThirdByGrp[altSrcGrp] || "?";
+          result.altLabel = `3${altSrcGrp}`;
+        }
+      }
+      return result;
     }
     return { team: "?", label: "?" };
   }
@@ -542,38 +568,42 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
               }}>
                 {r32Matches.map(({ match, home, away, homeType, awayType }) => {
                   const typeColor = t => t === "W" ? "#c8d8f0" : t === "R" ? "#8ab8e8" : "#f0c030";
-                  const homeColor = home.tied ? "#cc3333" : typeColor(homeType);
-                  const awayColor = away.tied ? "#cc3333" : typeColor(awayType);
+
+                  function TeamCell({ slot, type, align }) {
+                    const base  = slot.tied ? "#cc3333" : typeColor(type);
+                    const alt   = "#cc3333";
+                    return (
+                      <div style={{ textAlign: align }}>
+                        <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>
+                          {slot.label}
+                        </div>
+                        <div style={{ fontSize:12, fontWeight:700, color:base, whiteSpace:"nowrap" }}>
+                          {f(slot.team)} {slot.team}
+                        </div>
+                        {slot.altTeam && (
+                          <>
+                            <div style={{ fontSize:9, color:"var(--text-dark)", margin:"2px 0" }}>── or ──</div>
+                            <div style={{ fontSize:12, fontWeight:700, color:alt, whiteSpace:"nowrap" }}>
+                              {f(slot.altTeam)} {slot.altTeam}
+                            </div>
+                            <div style={{ fontSize:9, color:"var(--text-dark)" }}>{slot.altLabel}</div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  }
+
                   return (
                     <div key={match} style={{
                       background:"#0a1628", borderRadius:6, padding:"8px 12px",
                       display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:6, alignItems:"center",
                     }}>
-                      {/* Home */}
-                      <div style={{ textAlign:"right" }}>
-                        <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>
-                          {home.label}
-                        </div>
-                        <div style={{ fontSize:12, fontWeight:700, color:homeColor, whiteSpace:"nowrap" }}>
-                          {f(home.team)} {home.team}
-                        </div>
-                      </div>
-                      {/* Match label */}
+                      <TeamCell slot={home} type={homeType} align="right" />
                       <div style={{ textAlign:"center" }}>
-                        <div style={{ fontSize:9, color:"#f0c030", fontWeight:700, letterSpacing:1 }}>
-                          {match}
-                        </div>
+                        <div style={{ fontSize:9, color:"#f0c030", fontWeight:700, letterSpacing:1 }}>{match}</div>
                         <div style={{ fontSize:11, color:"var(--text-dark)" }}>vs</div>
                       </div>
-                      {/* Away */}
-                      <div style={{ textAlign:"left" }}>
-                        <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>
-                          {away.label}
-                        </div>
-                        <div style={{ fontSize:12, fontWeight:700, color:awayColor, whiteSpace:"nowrap" }}>
-                          {f(away.team)} {away.team}
-                        </div>
-                      </div>
+                      <TeamCell slot={away} type={awayType} align="left" />
                     </div>
                   );
                 })}
