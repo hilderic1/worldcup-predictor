@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "../supabase";
 import { GLOBAL_DEADLINE, KO_ROUNDS, GROUPS, GROUP_MATCHES, f } from "../constants";
 import { isPast, currentOpenRound } from "../utils";
+import FIFA_TABLE from "../data/fifaTable";
 
 const SCORE_CATEGORIES = [
   { key: "matchPts",   label: "Group Scores",       icon: "⚽", desc: "Match result + accuracy + exact" },
@@ -125,6 +126,105 @@ function sortStandings(stats, matches, preds) {
   return { sorted: result, tiedTeams: allTied };
 }
 
+// ── R32 bracket helpers ────────────────────────────────────────────────────
+
+// The 8 R32 matches that host a 3rd-place team, indexed by column position (0-7)
+// [matchNum, groupWinner, "vs 3rd of …"]
+const R32_3RD_SLOTS = [
+  { match: "M79", winner: "A", constraint: "C/E/F/H/I" },
+  { match: "M85", winner: "B", constraint: "E/F/G/I/J" },
+  { match: "M81", winner: "D", constraint: "B/E/F/I/J" },
+  { match: "M74", winner: "E", constraint: "A/B/C/D/F" },
+  { match: "M82", winner: "G", constraint: "A/E/H/I/J" },
+  { match: "M77", winner: "I", constraint: "C/D/F/G/H" },
+  { match: "M87", winner: "K", constraint: "D/E/I/J/L" },
+  { match: "M80", winner: "L", constraint: "E/H/I/J/K" },
+];
+
+// All 16 R32 matches in display order, left column then right column
+// type: "WvW"=winner vs winner, "WvR"=winner vs runner-up, "RvR"=runner-up vs runner-up, "Wv3"=winner vs 3rd
+const R32_MATCHES = [
+  { match:"M73", home:{type:"R",grp:"A"}, away:{type:"R",grp:"B"} },
+  { match:"M74", home:{type:"W",grp:"E"}, away:{type:"3",col:3}   },
+  { match:"M75", home:{type:"W",grp:"F"}, away:{type:"R",grp:"C"} },
+  { match:"M76", home:{type:"W",grp:"C"}, away:{type:"R",grp:"F"} },
+  { match:"M77", home:{type:"W",grp:"I"}, away:{type:"3",col:5}   },
+  { match:"M78", home:{type:"R",grp:"E"}, away:{type:"R",grp:"I"} },
+  { match:"M79", home:{type:"W",grp:"A"}, away:{type:"3",col:0}   },
+  { match:"M80", home:{type:"W",grp:"L"}, away:{type:"3",col:7}   },
+  { match:"M81", home:{type:"W",grp:"D"}, away:{type:"3",col:2}   },
+  { match:"M82", home:{type:"W",grp:"G"}, away:{type:"3",col:4}   },
+  { match:"M83", home:{type:"R",grp:"K"}, away:{type:"R",grp:"L"} },
+  { match:"M84", home:{type:"W",grp:"H"}, away:{type:"R",grp:"J"} },
+  { match:"M85", home:{type:"W",grp:"B"}, away:{type:"3",col:1}   },
+  { match:"M86", home:{type:"W",grp:"J"}, away:{type:"R",grp:"H"} },
+  { match:"M87", home:{type:"W",grp:"K"}, away:{type:"3",col:6}   },
+  { match:"M88", home:{type:"R",grp:"D"}, away:{type:"R",grp:"G"} },
+];
+
+/**
+ * From group standings, compute the full R32 bracket.
+ * Returns array of 16 match objects: { match, homeTeam, awayTeam, homeType, awayType }
+ * homeType/awayType: 'W'|'R'|'3'|'T' (T = colour-tied 3rd)
+ */
+function buildR32Bracket(groupStandings, matchPreds) {
+  // Extract top-3 per group
+  const pos = {}; // pos[grp] = { W: team, R: team, third: {team, pts, gd, gf} }
+  Object.entries(groupStandings).forEach(([grp, { sorted }]) => {
+    pos[grp] = {
+      W: sorted[0]?.team || "?",
+      R: sorted[1]?.team || "?",
+      third: sorted[2] ? {
+        team: sorted[2].team, grp,
+        points: sorted[2].points, gd: sorted[2].gd, gf: sorted[2].gf,
+      } : null,
+    };
+  });
+
+  // Rank 12 third-place teams
+  const thirds = Object.values(pos).map(p => p.third).filter(Boolean);
+  thirds.sort((a, b) =>
+    b.points !== a.points ? b.points - a.points :
+    b.gd     !== a.gd     ? b.gd     - a.gd     :
+    b.gf     !== a.gf     ? b.gf     - a.gf     : 0
+  );
+  const best8     = thirds.slice(0, 8);
+  const qualGrps  = best8.map(t => t.grp).sort().join("");
+  const colAssign = FIFA_TABLE[qualGrps] || null; // [col0..col7], each = source group letter
+
+  // Build 3rd-place team lookup: sourceGroup → team name
+  const thirdByGrp = {};
+  best8.forEach(t => { thirdByGrp[t.grp] = t.team; });
+
+  // Check for colour-tied 3rds (tied on all criteria, we know some may be uncertain)
+  const tiedThirds = new Set();
+  for (let i = 0; i < best8.length - 1; i++) {
+    const a = best8[i], b = best8[i + 1];
+    if (b.points === a.points && b.gd === a.gd && b.gf === a.gf) {
+      tiedThirds.add(a.grp); tiedThirds.add(b.grp);
+    }
+  }
+
+  function resolveTeam(slot) {
+    if (slot.type === "W") return { team: pos[slot.grp]?.W || "?", label: `1${slot.grp}` };
+    if (slot.type === "R") return { team: pos[slot.grp]?.R || "?", label: `2${slot.grp}` };
+    if (slot.type === "3") {
+      if (!colAssign) return { team: "?", label: "3rd ?" };
+      const srcGrp = colAssign[slot.col];
+      const team   = thirdByGrp[srcGrp] || "?";
+      const tied   = tiedThirds.has(srcGrp);
+      return { team, label: `3${srcGrp}`, tied };
+    }
+    return { team: "?", label: "?" };
+  }
+
+  return R32_MATCHES.map(m => {
+    const home = resolveTeam(m.home);
+    const away = resolveTeam(m.away);
+    return { match: m.match, home, away, homeType: m.home.type, awayType: m.away.type };
+  });
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function Dashboard({ player, lastLogin, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead }) {
@@ -177,6 +277,14 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
   }, [matchPreds]);
 
   const anyTies = Object.values(groupStandings).some(g => g?.tiedTeams?.size > 0);
+
+  // R32 bracket (derived from group standings)
+  const [r32Matches, setR32Matches] = useState([]);
+  useEffect(() => {
+    if (Object.keys(groupStandings).length === 12) {
+      setR32Matches(buildR32Bracket(groupStandings, matchPreds));
+    }
+  }, [groupStandings, matchPreds]);
 
   // Which simulation tile is open: null | 'groups' | 'r32'
   const [simTile, setSimTile] = useState(null);
@@ -410,10 +518,74 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
       {/* ── Round of 32 panel ── */}
       {simTile === "r32" && (
         <div className="card" style={{ marginTop: 8 }}>
-          <div className="card-label">Round of 32 — Simulated Bracket</div>
-          <div className="notice info" style={{ marginTop: 8 }}>
-            ⏳ R32 bracket coming soon — awaiting full FIFA slot-assignment table (rows 1–250) and bracket match-column mapping.
+          <div className="card-label">
+            Round of 32 — Simulated bracket based on your predicted group standings
           </div>
+          {statsLoading ? (
+            <div className="spinner">Calculating bracket…</div>
+          ) : r32Matches.length === 0 ? (
+            <div className="notice info">Enter group match predictions to simulate the R32 bracket.</div>
+          ) : (
+            <>
+              {/* Legend */}
+              <div style={{ display:"flex", gap:16, fontSize:11, flexWrap:"wrap", marginBottom:12, marginTop:8 }}>
+                <span style={{color:"#c8d8f0"}}>■ Group winner (1X)</span>
+                <span style={{color:"#8ab8e8"}}>■ Runner-up (2X)</span>
+                <span style={{color:"#f0c030"}}>■ 3rd place (3X)</span>
+                <span style={{color:"#cc3333"}}>■ Colour-tied 3rd place</span>
+              </div>
+
+              <div style={{
+                display:"grid",
+                gridTemplateColumns:"repeat(auto-fill, minmax(300px, 1fr))",
+                gap:8,
+              }}>
+                {r32Matches.map(({ match, home, away, homeType, awayType }) => {
+                  const typeColor = t => t === "W" ? "#c8d8f0" : t === "R" ? "#8ab8e8" : "#f0c030";
+                  const homeColor = home.tied ? "#cc3333" : typeColor(homeType);
+                  const awayColor = away.tied ? "#cc3333" : typeColor(awayType);
+                  return (
+                    <div key={match} style={{
+                      background:"#0a1628", borderRadius:6, padding:"8px 12px",
+                      display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:6, alignItems:"center",
+                    }}>
+                      {/* Home */}
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>
+                          {home.label}
+                        </div>
+                        <div style={{ fontSize:12, fontWeight:700, color:homeColor, whiteSpace:"nowrap" }}>
+                          {f(home.team)} {home.team}
+                        </div>
+                      </div>
+                      {/* Match label */}
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontSize:9, color:"#f0c030", fontWeight:700, letterSpacing:1 }}>
+                          {match}
+                        </div>
+                        <div style={{ fontSize:11, color:"var(--text-dark)" }}>vs</div>
+                      </div>
+                      {/* Away */}
+                      <div style={{ textAlign:"left" }}>
+                        <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>
+                          {away.label}
+                        </div>
+                        <div style={{ fontSize:12, fontWeight:700, color:awayColor, whiteSpace:"nowrap" }}>
+                          {f(away.team)} {away.team}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {r32Matches.some(m => m.home.tied || m.away.tied) && (
+                <div className="notice warn" style={{ marginTop:10, fontSize:11 }}>
+                  ⚠ Red teams are tied on all available 3rd-place criteria — actual qualification requires fair play scores &amp; FIFA rankings.
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
