@@ -163,83 +163,37 @@ const R32_MATCHES = [
 ];
 
 /**
- * From group standings, compute the full R32 bracket.
- * Returns array of 16 match objects: { match, homeTeam, awayTeam, homeType, awayType }
- * homeType/awayType: 'W'|'R'|'3'|'T' (T = colour-tied 3rd)
+ * Build the R32 bracket from group standings and a user-confirmed set of
+ * 8 qualifying group letters (selectedThirds).
  */
-function buildR32Bracket(groupStandings, matchPreds) {
-  // Extract top-3 per group
-  const pos = {}; // pos[grp] = { W: team, R: team, third: {team, pts, gd, gf} }
+function buildR32Bracket(groupStandings, selectedThirds) {
+  // Extract 1st / 2nd / 3rd per group
+  const pos = {};
   Object.entries(groupStandings).forEach(([grp, { sorted }]) => {
     pos[grp] = {
       W: sorted[0]?.team || "?",
       R: sorted[1]?.team || "?",
-      third: sorted[2] ? {
-        team: sorted[2].team, grp,
-        points: sorted[2].points, gd: sorted[2].gd, gf: sorted[2].gf,
-      } : null,
     };
   });
 
-  // Rank 12 third-place teams
-  const thirds = Object.values(pos).map(p => p.third).filter(Boolean);
-  thirds.sort((a, b) =>
-    b.points !== a.points ? b.points - a.points :
-    b.gd     !== a.gd     ? b.gd     - a.gd     :
-    b.gf     !== a.gf     ? b.gf     - a.gf     : 0
-  );
-  const best8    = thirds.slice(0, 8);
-  const qualGrps = best8.map(t => t.grp).sort().join("");
-  const colAssign = FIFA_TABLE[qualGrps] || null;
-
-  // Build 3rd-place team lookup: sourceGroup → team name
+  // 3rd-place team lookup from user selection
   const thirdByGrp = {};
-  best8.forEach(t => { thirdByGrp[t.grp] = t.team; });
+  Object.entries(groupStandings).forEach(([grp, { sorted }]) => {
+    if (selectedThirds.has(grp) && sorted[2]) thirdByGrp[grp] = sorted[2].team;
+  });
 
-  // ── Border tie: 8th and 9th 3rd-place teams tied on all available criteria ──
-  // In that case we don't know which group qualifies, so we compute BOTH possible
-  // table lookups and show both candidate teams for any slot that differs.
-  let colAssignAlt = null;
-  const altThirdByGrp = {};
-  const t8 = thirds[7], t9 = thirds[8];
-  const borderTied = !!(t8 && t9 &&
-    t8.points === t9.points && t8.gd === t9.gd && t8.gf === t9.gf);
-  if (borderTied) {
-    // Scenario B: swap 8th group for 9th group
-    const best8B   = [...best8.slice(0, 7), t9];
-    const qualGrpsB = best8B.map(t => t.grp).sort().join("");
-    colAssignAlt   = FIFA_TABLE[qualGrpsB] || null;
-    best8B.forEach(t => { altThirdByGrp[t.grp] = t.team; });
-  }
-
-  // Colour-tied teams within the confirmed best 8 (tied on all criteria but both qualify)
-  const tiedThirds = new Set();
-  for (let i = 0; i < best8.length - 1; i++) {
-    const a = best8[i], b = best8[i + 1];
-    if (b.points === a.points && b.gd === a.gd && b.gf === a.gf) {
-      tiedThirds.add(a.grp); tiedThirds.add(b.grp);
-    }
-  }
+  // FIFA table lookup
+  const qualGrps  = [...selectedThirds].sort().join("");
+  const colAssign = FIFA_TABLE[qualGrps] || null;
 
   function resolveTeam(slot) {
     if (slot.type === "W") return { team: pos[slot.grp]?.W || "?", label: `1${slot.grp}` };
     if (slot.type === "R") return { team: pos[slot.grp]?.R || "?", label: `2${slot.grp}` };
     if (slot.type === "3") {
       if (!colAssign) return { team: "?", label: "3rd ?" };
-      const srcGrp  = colAssign[slot.col];
-      const team    = thirdByGrp[srcGrp] || "?";
-      const tied    = tiedThirds.has(srcGrp);
-      const result  = { team, label: `3${srcGrp}`, tied };
-
-      // Border tie: check if the alternate scenario puts a different team here
-      if (borderTied && colAssignAlt) {
-        const altSrcGrp = colAssignAlt[slot.col];
-        if (altSrcGrp !== srcGrp) {
-          result.altTeam  = altThirdByGrp[altSrcGrp] || "?";
-          result.altLabel = `3${altSrcGrp}`;
-        }
-      }
-      return result;
+      const srcGrp = colAssign[slot.col];
+      const team   = thirdByGrp[srcGrp] || "?";
+      return { team, label: `3${srcGrp}` };
     }
     return { team: "?", label: "?" };
   }
@@ -304,13 +258,33 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
 
   const anyTies = Object.values(groupStandings).some(g => g?.tiedTeams?.size > 0);
 
-  // R32 bracket (derived from group standings)
+  // 3rd-place ranking and user selection for R32
+  const [rankedThirds, setRankedThirds] = useState([]);   // all 12, sorted
+  const [selectedThirds, setSelectedThirds] = useState(new Set()); // 8 group letters
+
+  useEffect(() => {
+    if (Object.keys(groupStandings).length < 12) return;
+    const thirds = Object.entries(groupStandings).map(([grp, { sorted }]) => {
+      const t = sorted[2];
+      return t ? { team: t.team, grp, points: t.points, gd: t.gd, gf: t.gf } : null;
+    }).filter(Boolean);
+    thirds.sort((a, b) =>
+      b.points !== a.points ? b.points - a.points :
+      b.gd     !== a.gd     ? b.gd     - a.gd     :
+      b.gf     !== a.gf     ? b.gf     - a.gf     : 0
+    );
+    setRankedThirds(thirds);
+    // Auto-select top 8; user can adjust any tied border teams
+    setSelectedThirds(new Set(thirds.slice(0, 8).map(t => t.grp)));
+  }, [groupStandings]);
+
+  // R32 bracket (derived from selected thirds)
   const [r32Matches, setR32Matches] = useState([]);
   useEffect(() => {
-    if (Object.keys(groupStandings).length === 12) {
-      setR32Matches(buildR32Bracket(groupStandings, matchPreds));
+    if (selectedThirds.size === 8 && Object.keys(groupStandings).length === 12) {
+      setR32Matches(buildR32Bracket(groupStandings, selectedThirds));
     }
-  }, [groupStandings, matchPreds]);
+  }, [groupStandings, selectedThirds]);
 
   // Which simulation tile is open: null | 'groups' | 'r32'
   const [simTile, setSimTile] = useState(null);
@@ -549,16 +523,121 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
           </div>
           {statsLoading ? (
             <div className="spinner">Calculating bracket…</div>
-          ) : r32Matches.length === 0 ? (
+          ) : rankedThirds.length === 0 ? (
             <div className="notice info">Enter group match predictions to simulate the R32 bracket.</div>
           ) : (
             <>
+              {/* ── 3rd-place qualifier selector ── */}
+              {(() => {
+                // Identify border stats: the stats of the 8th-best team
+                const t8stats = rankedThirds[7];
+                const isBorder = t => t8stats &&
+                  t.points === t8stats.points && t.gd === t8stats.gd && t.gf === t8stats.gf;
+                const isCertainIn  = t => !isBorder(t) && selectedThirds.has(t.grp);
+                const isCertainOut = t => !isBorder(t) && !selectedThirds.has(t.grp);
+
+                function toggleThird(grp) {
+                  setSelectedThirds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(grp)) {
+                      if (next.size > 8) next.delete(grp); // only delete if over 8
+                      // Never go below 8: if already 8 selected, swap via border logic
+                      // (handled below)
+                    } else {
+                      next.add(grp);
+                    }
+                    return next;
+                  });
+                }
+
+                // For border teams: clicking a non-selected border team replaces
+                // a selected border team (maintaining exactly 8)
+                function clickBorder(grp) {
+                  setSelectedThirds(prev => {
+                    if (prev.has(grp)) return prev; // can't deselect without a swap
+                    // Find a selected border team to swap out
+                    const borderSelected = rankedThirds.filter(t => isBorder(t) && prev.has(t.grp));
+                    if (borderSelected.length === 0) return prev;
+                    const next = new Set(prev);
+                    next.delete(borderSelected[borderSelected.length - 1].grp);
+                    next.add(grp);
+                    return next;
+                  });
+                }
+
+                return (
+                  <div style={{ marginBottom:16, marginTop:8 }}>
+                    <div style={{ fontSize:11, color:"var(--text-dark)", letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>
+                      3rd-place qualifiers — 8 of 12 advance
+                    </div>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                      <thead>
+                        <tr style={{ color:"var(--text-dark)", borderBottom:"1px solid #1a2a3a" }}>
+                          <td style={{padding:"2px 4px",width:20}}>#</td>
+                          <td style={{padding:"2px 4px"}}>Team</td>
+                          <td style={{padding:"2px 4px",textAlign:"center",width:28}}>Pts</td>
+                          <td style={{padding:"2px 4px",textAlign:"center",width:28}}>GD</td>
+                          <td style={{padding:"2px 4px",textAlign:"center",width:28}}>GF</td>
+                          <td style={{padding:"2px 4px",textAlign:"center",width:60}}>Status</td>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankedThirds.map((t, idx) => {
+                          const certain_in  = isCertainIn(t);
+                          const certain_out = isCertainOut(t);
+                          const border      = isBorder(t);
+                          const selected    = selectedThirds.has(t.grp);
+                          const rowColor    = certain_in  ? "#c8d8f0"
+                                           : border && selected  ? "#f0c030"
+                                           : border && !selected ? "#a07010"
+                                           : "var(--text-dark)";
+                          return (
+                            <tr key={t.grp} style={{ borderBottom:"1px solid #0e1a2e" }}>
+                              <td style={{padding:"3px 4px",color:rowColor}}>{idx+1}</td>
+                              <td style={{padding:"3px 4px",color:rowColor,fontWeight:certain_in||border?700:400}}>
+                                {f(t.team)} {t.team} <span style={{color:"var(--text-dark)",fontWeight:400}}>(3{t.grp})</span>
+                              </td>
+                              <td style={{padding:"3px 4px",textAlign:"center",color:"var(--text-dark)"}}>{t.points}</td>
+                              <td style={{padding:"3px 4px",textAlign:"center",color:"var(--text-dark)"}}>{t.gd>0?"+":""}{t.gd}</td>
+                              <td style={{padding:"3px 4px",textAlign:"center",color:"var(--text-dark)"}}>{t.gf}</td>
+                              <td style={{padding:"3px 4px",textAlign:"center"}}>
+                                {certain_in  && <span style={{color:"#4caf80",fontWeight:700}}>✓ Through</span>}
+                                {certain_out && <span style={{color:"var(--text-dark)"}}>✗ Out</span>}
+                                {border && (
+                                  <button
+                                    onClick={() => clickBorder(t.grp)}
+                                    style={{
+                                      fontSize:10, padding:"2px 8px", cursor:"pointer",
+                                      borderRadius:12, border:"1px solid",
+                                      borderColor: selected ? "#f0c030" : "#4a3a10",
+                                      background:  selected ? "rgba(240,192,48,0.15)" : "transparent",
+                                      color:       selected ? "#f0c030" : "#a07010",
+                                      fontWeight:  selected ? 700 : 400,
+                                    }}
+                                  >
+                                    {selected ? "✓ Selected" : "Select"}
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {rankedThirds.some(t => isBorder(t)) && (
+                      <div style={{fontSize:11,color:"#f0c030",marginTop:6}}>
+                        ⚠ Tied teams highlighted — click to swap which advances. Fair play &amp; FIFA ranking not available.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Legend */}
-              <div style={{ display:"flex", gap:16, fontSize:11, flexWrap:"wrap", marginBottom:12, marginTop:8 }}>
+              <div style={{ display:"flex", gap:16, fontSize:11, flexWrap:"wrap", marginBottom:12 }}>
                 <span style={{color:"#c8d8f0"}}>■ Group winner (1X)</span>
                 <span style={{color:"#8ab8e8"}}>■ Runner-up (2X)</span>
                 <span style={{color:"#f0c030"}}>■ 3rd place (3X)</span>
-                <span style={{color:"#cc3333"}}>■ Colour-tied 3rd place</span>
               </div>
 
               <div style={{
@@ -568,30 +647,16 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
               }}>
                 {r32Matches.map(({ match, home, away, homeType, awayType }) => {
                   const typeColor = t => t === "W" ? "#c8d8f0" : t === "R" ? "#8ab8e8" : "#f0c030";
+                  const col = (slot, type) => typeColor(type);
 
-                  function TeamCell({ slot, type, align }) {
-                    const base  = slot.tied ? "#cc3333" : typeColor(type);
-                    const alt   = "#cc3333";
-                    return (
-                      <div style={{ textAlign: align }}>
-                        <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>
-                          {slot.label}
-                        </div>
-                        <div style={{ fontSize:12, fontWeight:700, color:base, whiteSpace:"nowrap" }}>
-                          {f(slot.team)} {slot.team}
-                        </div>
-                        {slot.altTeam && (
-                          <>
-                            <div style={{ fontSize:9, color:"var(--text-dark)", margin:"2px 0" }}>── or ──</div>
-                            <div style={{ fontSize:12, fontWeight:700, color:alt, whiteSpace:"nowrap" }}>
-                              {f(slot.altTeam)} {slot.altTeam}
-                            </div>
-                            <div style={{ fontSize:9, color:"var(--text-dark)" }}>{slot.altLabel}</div>
-                          </>
-                        )}
+                  const TeamCell = ({ slot, type, align }) => (
+                    <div style={{ textAlign: align }}>
+                      <div style={{ fontSize:10, color:"var(--text-dark)", marginBottom:2 }}>{slot.label}</div>
+                      <div style={{ fontSize:12, fontWeight:700, color:col(slot,type), whiteSpace:"nowrap" }}>
+                        {f(slot.team)} {slot.team}
                       </div>
-                    );
-                  }
+                    </div>
+                  );
 
                   return (
                     <div key={match} style={{
@@ -609,11 +674,6 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
                 })}
               </div>
 
-              {r32Matches.some(m => m.home.tied || m.away.tied) && (
-                <div className="notice warn" style={{ marginTop:10, fontSize:11 }}>
-                  ⚠ Red teams are tied on all available 3rd-place criteria — actual qualification requires fair play scores &amp; FIFA rankings.
-                </div>
-              )}
             </>
           )}
         </div>
