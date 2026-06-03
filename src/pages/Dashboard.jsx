@@ -178,6 +178,10 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
 
   const anyTies = Object.values(groupStandings).some(g => g?.tiedTeams?.size > 0);
 
+  // Which simulation tile is open: null | 'groups' | 'r32'
+  const [simTile, setSimTile] = useState(null);
+  function toggleTile(key) { setSimTile(prev => prev === key ? null : key); }
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
@@ -281,115 +285,137 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
         </button>
       </div>
 
-      {/* Statistics */}
+      {/* Simulations */}
       <div className="section-header" style={{ marginTop: 32 }}>
-        <div className="section-title">📈 Statistics</div>
+        <div className="section-title">🔬 Simulations</div>
       </div>
 
-      <div className="card">
-        <div className="card-label">
-          Predicted Group Standings — how each group would finish if your picks were correct
-        </div>
+      {/* Simulation tile grid */}
+      <div className="dashboard-actions">
 
-        {statsLoading ? (
-          <div className="spinner">Calculating standings…</div>
-        ) : (
-          <>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
-              gap: 14,
-              marginTop: 14,
-            }}>
-              {Object.entries(GROUPS).map(([grp, teams]) => {
-                const { sorted = [], tiedTeams = new Set() } = groupStandings[grp] || {};
-                const grpMatches = GROUP_MATCHES.filter(m => m.group === grp);
-                const predicted  = grpMatches.filter(m => isFilled(matchPreds[m.id])).length;
-                const allFilled  = predicted === grpMatches.length;
+        {/* ── Group Standings tile ── */}
+        <button
+          className={`dashboard-action-card ${simTile === "groups" ? "active" : ""}`}
+          onClick={() => toggleTile("groups")}
+          style={simTile === "groups" ? { borderColor: "#f0c030", background: "rgba(240,192,48,0.07)" } : {}}
+        >
+          <div className="dashboard-action-icon">📊</div>
+          <div className="dashboard-action-label">Group Standings</div>
+          <div className="dashboard-action-desc">Standings if your picks were correct</div>
+          <div style={{ fontSize: 10, color: "#f0c030", marginTop: 6 }}>
+            {simTile === "groups" ? "▲ collapse" : "▼ expand"}
+          </div>
+        </button>
 
-                return (
-                  <div key={grp} style={{ background: "#0a1628", borderRadius: 8, padding: "10px 12px" }}>
-                    {/* Group header */}
-                    <div style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      marginBottom: 8,
-                    }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0c030" }}>
-                        GROUP {grp}
-                      </span>
-                      <span style={{
-                        fontSize: 10, color: allFilled ? "#4caf80" : "var(--text-dark)",
-                        fontWeight: allFilled ? 700 : 400,
-                      }}>
-                        {predicted}/{grpMatches.length} matches
-                      </span>
+        {/* ── Round of 32 tile ── */}
+        <button
+          className={`dashboard-action-card ${simTile === "r32" ? "active" : ""}`}
+          onClick={() => toggleTile("r32")}
+          style={simTile === "r32" ? { borderColor: "#f0c030", background: "rgba(240,192,48,0.07)" } : {}}
+        >
+          <div className="dashboard-action-icon">⚔️</div>
+          <div className="dashboard-action-label">Round of 32</div>
+          <div className="dashboard-action-desc">Simulated R32 bracket</div>
+          <div style={{ fontSize: 10, color: "#f0c030", marginTop: 6 }}>
+            {simTile === "r32" ? "▲ collapse" : "▼ expand"}
+          </div>
+        </button>
+
+      </div>
+
+      {/* ── Group Standings panel ── */}
+      {simTile === "groups" && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <div className="card-label">
+            Predicted Group Standings — how each group would finish if your picks were correct
+          </div>
+          {statsLoading ? (
+            <div className="spinner">Calculating standings…</div>
+          ) : (
+            <>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
+                gap: 14,
+                marginTop: 14,
+              }}>
+                {Object.entries(GROUPS).map(([grp]) => {
+                  const { sorted = [], tiedTeams = new Set() } = groupStandings[grp] || {};
+                  const grpMatches = GROUP_MATCHES.filter(m => m.group === grp);
+                  const predicted  = grpMatches.filter(m => isFilled(matchPreds[m.id])).length;
+                  const allFilled  = predicted === grpMatches.length;
+                  return (
+                    <div key={grp} style={{ background: "#0a1628", borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0c030" }}>GROUP {grp}</span>
+                        <span style={{ fontSize: 10, color: allFilled ? "#4caf80" : "var(--text-dark)", fontWeight: allFilled ? 700 : 400 }}>
+                          {predicted}/{grpMatches.length} matches
+                        </span>
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ color: "var(--text-dark)", borderBottom: "1px solid #1a2a3a" }}>
+                            <td style={{ padding: "2px 3px", width: 16 }}>#</td>
+                            <td style={{ padding: "2px 3px" }}>Team</td>
+                            <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>P</td>
+                            <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>W</td>
+                            <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>D</td>
+                            <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>L</td>
+                            <td style={{ padding: "2px 3px", textAlign: "center", width: 28 }}>GD</td>
+                            <td style={{ padding: "2px 3px", textAlign: "center", width: 28, fontWeight: 700 }}>Pts</td>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sorted.map((row, idx) => {
+                            const isTied    = tiedTeams.has(row.team);
+                            const qualifies = idx < 2;
+                            const rowColor  = isTied ? "#f0c030" : qualifies ? "#c8d8f0" : "var(--text-dark)";
+                            return (
+                              <tr key={row.team} style={{ borderBottom: "1px solid #0e1a2e" }}>
+                                <td style={{ padding: "3px 3px", color: rowColor, fontWeight: qualifies ? 700 : 400 }}>{idx + 1}</td>
+                                <td style={{ padding: "3px 3px", color: rowColor, fontWeight: qualifies ? 700 : 400, whiteSpace: "nowrap" }}>
+                                  {f(row.team)} {row.team}
+                                </td>
+                                <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.played}</td>
+                                <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.won}</td>
+                                <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.drawn}</td>
+                                <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.lost}</td>
+                                <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>
+                                  {row.gd > 0 ? "+" : ""}{row.gd}
+                                </td>
+                                <td style={{ padding: "3px 3px", textAlign: "center", color: rowColor, fontWeight: 700 }}>{row.points}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-
-                    {/* Standings table */}
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                      <thead>
-                        <tr style={{ color: "var(--text-dark)", borderBottom: "1px solid #1a2a3a" }}>
-                          <td style={{ padding: "2px 3px", width: 16 }}>#</td>
-                          <td style={{ padding: "2px 3px" }}>Team</td>
-                          <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>P</td>
-                          <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>W</td>
-                          <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>D</td>
-                          <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>L</td>
-                          <td style={{ padding: "2px 3px", textAlign: "center", width: 28 }}>GD</td>
-                          <td style={{ padding: "2px 3px", textAlign: "center", width: 28, fontWeight: 700 }}>Pts</td>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sorted.map((row, idx) => {
-                          const isTied    = tiedTeams.has(row.team);
-                          const qualifies = idx < 2; // top 2 advance (simplified)
-                          const rowColor  = isTied    ? "#f0c030"
-                                          : qualifies ? "#c8d8f0"
-                                          : "var(--text-dark)";
-                          return (
-                            <tr key={row.team} style={{
-                              borderBottom: "1px solid #0e1a2e",
-                              background: idx === 1 ? "rgba(255,255,255,0.02)" : "transparent",
-                            }}>
-                              <td style={{ padding: "3px 3px", color: rowColor, fontWeight: qualifies ? 700 : 400 }}>
-                                {idx + 1}
-                              </td>
-                              <td style={{ padding: "3px 3px", color: rowColor, fontWeight: qualifies ? 700 : 400, whiteSpace: "nowrap" }}>
-                                {f(row.team)} {row.team}
-                              </td>
-                              <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.played}</td>
-                              <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.won}</td>
-                              <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.drawn}</td>
-                              <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.lost}</td>
-                              <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>
-                                {row.gd > 0 ? "+" : ""}{row.gd}
-                              </td>
-                              <td style={{ padding: "3px 3px", textAlign: "center", color: rowColor, fontWeight: 700 }}>
-                                {row.points}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Legend */}
-            <div style={{ marginTop: 12, display: "flex", gap: 16, fontSize: 11, flexWrap: "wrap" }}>
-              <span style={{ color: "#c8d8f0" }}>■ Advances (top 2)</span>
-              <span style={{ color: "#f0c030" }}>■ Colour tie — fair play &amp; FIFA ranking unavailable</span>
-            </div>
-            {anyTies && (
-              <div className="notice warn" style={{ marginTop: 8, fontSize: 11 }}>
-                ⚠ Some teams are tied on all available criteria. Actual resolution requires fair play scores and FIFA rankings.
+                  );
+                })}
               </div>
-            )}
-          </>
-        )}
-      </div>
+              <div style={{ marginTop: 12, display: "flex", gap: 16, fontSize: 11, flexWrap: "wrap" }}>
+                <span style={{ color: "#c8d8f0" }}>■ Advances (top 2)</span>
+                <span style={{ color: "#f0c030" }}>■ Colour tie — fair play &amp; FIFA ranking unavailable</span>
+              </div>
+              {anyTies && (
+                <div className="notice warn" style={{ marginTop: 8, fontSize: 11 }}>
+                  ⚠ Some teams are tied on all available criteria. Actual resolution requires fair play scores and FIFA rankings.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Round of 32 panel ── */}
+      {simTile === "r32" && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <div className="card-label">Round of 32 — Simulated Bracket</div>
+          <div className="notice info" style={{ marginTop: 8 }}>
+            ⏳ R32 bracket coming soon — awaiting full FIFA slot-assignment table (rows 1–250) and bracket match-column mapping.
+          </div>
+        </div>
+      )}
 
       {/* Next deadline reminder */}
       {nextDeadline && (
