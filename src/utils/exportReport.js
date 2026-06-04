@@ -80,7 +80,7 @@ function buildPredsObject(name, pmRows, pgRows, pkRows, pkmRows) {
 
 // ── Sheet builder ──────────────────────────────────────────────────────────
 
-function buildPlayerSheet(XLSX, preds, fixtures = {}) {
+function buildPlayerSheet(XLSX, preds, fixtures = {}, restrictToStartedRounds = false) {
   const rows = [];
 
   // ── Group match predictions ──
@@ -141,10 +141,12 @@ function buildPlayerSheet(XLSX, preds, fixtures = {}) {
   rows.push((preds.sfRank || []).map(t => t || ""));
   rows.push([]);
 
-  // ── KO match score predictions — only include rounds that have started ──
-  const startedRounds = KO_ROUNDS.filter(r =>
-    r.firstKickoff && new Date() >= new Date(r.firstKickoff)
-  );
+  // ── KO match score predictions ──
+  // Admin export: only show rounds that have started (no peeking at future picks)
+  // Player export: always show all their own picks
+  const startedRounds = restrictToStartedRounds
+    ? KO_ROUNDS.filter(r => r.firstKickoff && new Date() >= new Date(r.firstKickoff))
+    : KO_ROUNDS;
   const hasKO = startedRounds.some(r => (preds.koMatches[r.id] || []).some(Boolean));
   if (startedRounds.length > 0) {
     rows.push(["KNOCKOUT ROUND — MATCH SCORE PREDICTIONS"]);
@@ -190,7 +192,7 @@ export async function exportMyPicks(playerName) {
   });
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, buildPlayerSheet(XLSX, preds, fixtures), "My Picks");
+  XLSX.utils.book_append_sheet(wb, buildPlayerSheet(XLSX, preds, fixtures, false), "My Picks");
   XLSX.writeFile(wb, `WC2026_Picks_${playerName}.xlsx`);
 }
 
@@ -201,7 +203,7 @@ export async function exportAllPicks() {
   const wb = XLSX.utils.book_new();
 
   PLAYERS.forEach(name => {
-    const ws = buildPlayerSheet(XLSX, byPlayer[name], fixtures);
+    const ws = buildPlayerSheet(XLSX, byPlayer[name], fixtures, true);
     const sheetName = name.substring(0, 31).replace(/[:\\/?*[\]]/g, "_");
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
