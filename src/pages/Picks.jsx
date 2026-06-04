@@ -19,7 +19,7 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
   const [sfRankPred, setSfRankPred] = useState(Array(4).fill(""));
   const [koMatchPreds, setKoMatchPreds] = useState({});
 
-  const openRound = currentOpenRound();
+  const openRound    = currentOpenRound();
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
   const loadPredictions = useCallback(async () => {
@@ -90,8 +90,8 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
         await supabase.from("knockout_predictions").upsert(koRows, { onConflict: "player_name,round" });
       }
 
-      if (openRound !== "GROUP" && openRound !== "CLOSED") {
-        const round = openRound;
+      const roundsToSave = (openRound !== "GROUP" && openRound !== "CLOSED") ? [openRound] : [];
+      for (const round of roundsToSave) {
         const preds = koMatchPreds[round] || [];
         const koMatchRows = preds
           .map((p, i) => ({

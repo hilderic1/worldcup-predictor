@@ -109,11 +109,13 @@ export const PLAYER_COLORS = {
 export const FINAL_RANKS = ["1st (Winner)", "2nd (Runner-up)", "3rd place", "4th place"];
 
 export const KO_ROUNDS = [
-  { id: "R32", label: "Round of 32", games: 16, deadline: "2026-06-28T07:00:00-07:00", tzLabel: "Los Angeles time" },
-  { id: "R16", label: "Round of 16", games: 8,  deadline: "2026-07-04T07:00:00-05:00", tzLabel: "Houston time" },
-  { id: "QF",  label: "Quarter-Finals", games: 4, deadline: "2026-07-08T23:59:00-04:00", tzLabel: "EDT" },
-  { id: "SF",  label: "Semi-Finals", games: 2,  deadline: "2026-07-13T23:59:00-04:00", tzLabel: "EDT" },
-  { id: "FINAL", label: "Bronze & Final", games: 2, deadline: "2026-07-17T23:59:00-04:00", tzLabel: "EDT" },
+  // deadline   = picks lock (manual cut-off, set conservatively before first game)
+  // firstKickoff = auto-lock safety net — picks also lock when first game of the round actually starts
+  { id: "R32",   label: "Round of 32",    games: 16, deadline: "2026-06-28T07:00:00-07:00", tzLabel: "Los Angeles time", firstKickoff: "2026-06-28T19:00:00Z" },
+  { id: "R16",   label: "Round of 16",    games: 8,  deadline: "2026-07-04T07:00:00-05:00", tzLabel: "Houston time",     firstKickoff: "2026-07-04T18:00:00Z" },
+  { id: "QF",    label: "Quarter-Finals", games: 4,  deadline: "2026-07-08T23:59:00-04:00", tzLabel: "EDT",              firstKickoff: "2026-07-09T19:00:00Z" },
+  { id: "SF",    label: "Semi-Finals",    games: 2,  deadline: "2026-07-13T23:59:00-04:00", tzLabel: "EDT",              firstKickoff: "2026-07-14T19:00:00Z" },
+  { id: "FINAL", label: "Bronze & Final", games: 2,  deadline: "2026-07-17T23:59:00-04:00", tzLabel: "EDT",              firstKickoff: "2026-07-18T19:00:00Z" },
 ];
 
 export const GLOBAL_DEADLINE = "2026-06-10T23:59:00+01:00";

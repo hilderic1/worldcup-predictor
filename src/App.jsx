@@ -42,6 +42,13 @@ export default function App() {
   // Picks reveal — true once global deadline passes AND all players have fully submitted
   const [allPicksRevealed, setAllPicksRevealed] = useState(() => isPast(GLOBAL_DEADLINE));
 
+  // Test phase flag (set directly in DB: app_settings key='test_phase' value='true')
+  const [testPhase, setTestPhase] = useState(false);
+  useEffect(() => {
+    supabase.from("app_settings").select("value").eq("key", "test_phase").single()
+      .then(({ data }) => { if (data?.value === "true") setTestPhase(true); });
+  }, []);
+
   // Messages (for logged-in non-admin player)
   const [messages, setMessages] = useState([]);
 
@@ -488,6 +495,59 @@ export default function App() {
     setView(page);
   }
 
+  // ── TEST MODE helpers (admin only) ──
+
+  // Returns the UTC timestamp for a GROUP_MATCHES entry
+  function matchKickoff(m) {
+    const [mo, dy] = m.date.split("/");
+    const [hh, mm] = m.time.split(":");
+    return new Date(`2026-${mo.padStart(2,"0")}-${dy.padStart(2,"0")}T${hh.padStart(2,"0")}:${mm}:00Z`).getTime();
+  }
+
+  // Has a group match started yet?
+  function matchStarted(m) { return Date.now() >= matchKickoff(m); }
+
+  // Has a KO round started yet (firstKickoff passed)?
+  function roundStarted(r) {
+    return !r.firstKickoff || Date.now() >= new Date(r.firstKickoff).getTime();
+  }
+
+  // Have ALL matches of a group been played?
+  function groupComplete(grp) {
+    return GROUP_MATCHES.filter(m => m.group === grp).every(matchStarted);
+  }
+
+  async function enableTestMode() {
+    await supabase.from("app_settings")
+      .upsert({ key: "test_phase", value: "true" }, { onConflict: "key" });
+    setTestPhase(true);
+  }
+
+  async function endTestMode() {
+    // Delete actual results for group matches that haven't started yet
+    const futureMatchIds = GROUP_MATCHES.filter(m => !matchStarted(m)).map(m => m.id);
+    if (futureMatchIds.length)
+      await supabase.from("actual_results").delete().in("match_id", futureMatchIds);
+
+    // Delete group rankings for groups with any future match
+    const futureGroups = Object.keys(GROUPS).filter(grp => !groupComplete(grp));
+    if (futureGroups.length)
+      await supabase.from("actual_group_rankings").delete().in("group_id", futureGroups);
+
+    // Delete KO scores and qualifier results for rounds not yet started
+    const futureRoundIds = KO_ROUNDS.filter(r => !roundStarted(r)).map(r => r.id);
+    if (futureRoundIds.length) {
+      await supabase.from("ko_actual_scores").delete().in("round", futureRoundIds);
+      await supabase.from("actual_knockout").delete().in("round", futureRoundIds);
+    }
+
+    // Turn off test mode
+    await supabase.from("app_settings")
+      .update({ value: "false" }).eq("key", "test_phase");
+    setTestPhase(false);
+    await loadActuals(); // refresh the admin panel
+  }
+
   // ── SAVE ACTUALS (admin) ──
   async function saveActuals() {
     setSaveState("saving");
@@ -710,11 +770,32 @@ export default function App() {
           <>
             <div className="section-title" style={{ marginBottom: 18 }}>🔧 Admin Panel</div>
 
+            {/* Test mode toggle */}
+            <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              {testPhase ? (
+                <>
+                  <span style={{ color: "#f0c030", fontWeight: 700 }}>🧪 Test Mode is ACTIVE — future results can be entered</span>
+                  <button
+                    className="btn-save"
+                    style={{ background: "#cc3333", borderColor: "#cc3333" }}
+                    onClick={endTestMode}
+                  >
+                    🔒 End Test Mode &amp; Delete Future Test Results
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ color: "var(--text-dark)", fontSize: 13 }}>Test Mode off — results locked to started games only</span>
+                  <button className="tab" onClick={enableTestMode}>🧪 Enable Test Mode</button>
+                </>
+              )}
+            </div>
+
             <div className="card">
               <div className="card-label">Tournament Deadlines</div>
               <table className="deadline-table">
                 <thead>
-                  <tr><th>Stage</th><th>Deadline</th><th>Status</th></tr>
+                  <tr><th>Stage</th><th>Deadline</th><th>First Kickoff</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                   <tr>
@@ -724,17 +805,32 @@ export default function App() {
                       {isPast(GLOBAL_DEADLINE) ? "🔒 Locked" : "🟢 Open"}
                     </td>
                   </tr>
-                  {KO_ROUNDS.map(r => (
-                    <tr key={r.id}>
-                      <td>{r.label} scores</td>
-                      <td className={isPast(r.deadline) ? "past" : openRound === r.id ? "open" : ""}>
-                        {formatDeadline(r.deadline, r.tzLabel)}
-                      </td>
-                      <td className={isPast(r.deadline) ? "past" : openRound === r.id ? "open" : ""}>
-                        {isPast(r.deadline) ? "🔒 Locked" : openRound === r.id ? "🟢 Open" : "⏳ Upcoming"}
-                      </td>
-                    </tr>
-                  ))}
+                  {KO_ROUNDS.map(r => {
+                    const deadlineMs = new Date(r.deadline).getTime();
+                    const kickoffMs  = r.firstKickoff ? new Date(r.firstKickoff).getTime() : Infinity;
+                    const lockedBy   = Date.now() >= Math.min(deadlineMs, kickoffMs);
+                    const lockedByKickoff = !isPast(r.deadline) && r.firstKickoff && isPast(r.firstKickoff);
+                    return (
+                      <tr key={r.id}>
+                        <td>{r.label} scores</td>
+                        <td className={isPast(r.deadline) ? "past" : openRound === r.id || openRound === "TEST" ? "open" : ""}>
+                          {formatDeadline(r.deadline, r.tzLabel)}
+                        </td>
+                        <td style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                          {r.firstKickoff
+                            ? new Date(r.firstKickoff).toLocaleString("en-GB", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" }) + " UTC"
+                            : "—"}
+                        </td>
+                        <td className={lockedBy ? "past" : openRound === r.id || openRound === "TEST" ? "open" : ""}>
+                          {testPhase ? "🧪 Test open"
+                            : lockedByKickoff ? "🔒 Locked (game started)"
+                            : lockedBy ? "🔒 Locked"
+                            : openRound === r.id ? "🟢 Open"
+                            : "⏳ Upcoming"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -828,22 +924,26 @@ export default function App() {
                 <div className="card-label">Group {grp}</div>
                 <div className="match-list">
                   {GROUP_MATCHES.filter(m => m.group === grp).map(m => {
-                    const a = actualMatches[m.id] || {};
+                    const a       = actualMatches[m.id] || {};
+                    const canEdit = testPhase || matchStarted(m);
                     return (
-                      <div key={m.id} className="match-row">
+                      <div key={m.id} className="match-row" style={{ opacity: canEdit ? 1 : 0.45 }}>
                         <div className="team-l">{f(m.home)} {m.home}</div>
                         <input
                           className="score-inp" type="number" min="0" max="20"
                           value={a.home_score ?? ""} placeholder="0"
+                          disabled={!canEdit}
                           onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], home_score: e.target.value } }))}
                         />
                         <div className="sep">–</div>
                         <input
                           className="score-inp" type="number" min="0" max="20"
                           value={a.away_score ?? ""} placeholder="0"
+                          disabled={!canEdit}
                           onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], away_score: e.target.value } }))}
                         />
                         <div className="team-r">{m.away} {f(m.away)}</div>
+                        {!canEdit && <div style={{ gridColumn:"1/-1", fontSize:10, color:"var(--text-dark)" }}>⏳ Not started yet</div>}
                       </div>
                     );
                   })}
@@ -858,14 +958,16 @@ export default function App() {
                 <div className="group-grid">
                   {Object.entries(GROUPS).map(([grp, teams]) => {
                     const v = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
+                    const canEdit = testPhase || groupComplete(grp);
                     return (
-                      <div key={grp} className="group-box">
-                        <div className="group-box-title">Group {grp}</div>
+                      <div key={grp} className="group-box" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                        <div className="group-box-title">Group {grp}{!canEdit && " ⏳"}</div>
                         {["first", "second", "third"].map((rank, i) => (
                           <div key={rank} className="rank-row">
                             <div className="rank-num">{i + 1}</div>
                             <select
                               className="rank-sel"
+                              disabled={!canEdit}
                               value={v[rank] || ""}
                               onChange={e => setActualGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: e.target.value } }))}
                             >
@@ -884,18 +986,24 @@ export default function App() {
             )}
 
             {/* KO ACTUAL SCORES */}
-            {adminTab === "ko_results" && KO_ROUNDS.map(r => (
-              <div key={r.id} className="card">
-                <div className="card-label">{r.label} — actual scores</div>
-                <KoMatchGrid
-                  round={r.id}
-                  fixtures={koFixtures[r.id]}
-                  scores={koActualScores[r.id]}
-                  setScores={s => setKoActualScores(prev => ({ ...prev, [r.id]: s }))}
-                  disabled={false}
-                />
-              </div>
-            ))}
+            {adminTab === "ko_results" && KO_ROUNDS.map(r => {
+              const canEdit = testPhase || roundStarted(r);
+              return (
+                <div key={r.id} className="card" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                  <div className="card-label">
+                    {r.label} — actual scores
+                    {!canEdit && <span style={{ color:"var(--text-dark)", marginLeft:8, fontSize:11 }}>⏳ Not started yet</span>}
+                  </div>
+                  <KoMatchGrid
+                    round={r.id}
+                    fixtures={koFixtures[r.id]}
+                    scores={koActualScores[r.id]}
+                    setScores={s => setKoActualScores(prev => ({ ...prev, [r.id]: s }))}
+                    disabled={!canEdit}
+                  />
+                </div>
+              );
+            })}
 
             {/* QUALIFIERS */}
             {adminTab === "qualifiers" && (
@@ -904,39 +1012,52 @@ export default function App() {
                   { id: "R32", label: "R32 Qualifiers (32 teams)", arr: actualR32, setArr: setActualR32, size: 32 },
                   { id: "R16", label: "R16 Qualifiers (16 teams)", arr: actualR16, setArr: setActualR16, size: 16 },
                   { id: "QF",  label: "Quarter-Finalists (8 teams)", arr: actualQF, setArr: setActualQF, size: 8 },
-                ].map(({ id, label, arr, setArr, size }) => (
-                  <div key={id} className="card">
-                    <div className="card-label">{label}</div>
-                    <div className="ko-grid">
-                      {Array(size).fill(0).map((_, i) => (
-                        <select
-                          key={i} className="rank-sel"
-                          value={arr[i] || ""}
-                          onChange={e => { const u = [...arr]; u[i] = e.target.value; setArr(u); }}
-                        >
-                          <option value="">— team {i + 1} —</option>
-                          {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                        </select>
-                      ))}
+                ].map(({ id, label, arr, setArr, size }) => {
+                  const r = KO_ROUNDS.find(r => r.id === id);
+                  const canEdit = testPhase || (r && roundStarted(r));
+                  return (
+                    <div key={id} className="card" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                      <div className="card-label">
+                        {label}
+                        {!canEdit && <span style={{ color:"var(--text-dark)", marginLeft:8, fontSize:11 }}>⏳ Not started yet</span>}
+                      </div>
+                      <div className="ko-grid">
+                        {Array(size).fill(0).map((_, i) => (
+                          <select
+                            key={i} className="rank-sel"
+                            disabled={!canEdit}
+                            value={arr[i] || ""}
+                            onChange={e => { const u = [...arr]; u[i] = e.target.value; setArr(u); }}
+                          >
+                            <option value="">— team {i + 1} —</option>
+                            {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                          </select>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="card">
                   <div className="card-label">Final standings (1st–4th)</div>
                   <div className="sf-list">
-                    {FINAL_RANKS.map((label, i) => (
-                      <div key={i} className="sf-row">
-                        <div className="sf-rank-label">{label}</div>
-                        <select
-                          className="rank-sel" style={{ maxWidth: 220 }}
-                          value={actualSFRank[i] || ""}
-                          onChange={e => { const u = [...actualSFRank]; u[i] = e.target.value; setActualSFRank(u); }}
-                        >
-                          <option value="">— team —</option>
-                          {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                        </select>
-                      </div>
-                    ))}
+                    {FINAL_RANKS.map((label, i) => {
+                      const r = KO_ROUNDS.find(r => r.id === "FINAL");
+                      const canEdit = testPhase || (r && roundStarted(r));
+                      return (
+                        <div key={i} className="sf-row">
+                          <div className="sf-rank-label">{label}</div>
+                          <select
+                            className="rank-sel" style={{ maxWidth: 220 }}
+                            disabled={!canEdit}
+                            value={actualSFRank[i] || ""}
+                            onChange={e => { const u = [...actualSFRank]; u[i] = e.target.value; setActualSFRank(u); }}
+                          >
+                            <option value="">— team —</option>
+                            {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                          </select>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </>
