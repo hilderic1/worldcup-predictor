@@ -1150,18 +1150,24 @@ export default function App() {
               >
                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Results"}
               </button>
-              <button
-                className="tab"
-                style={{ fontSize: 13, padding: "10px 20px" }}
-                disabled={exporting}
-                onClick={async () => {
-                  setExporting(true);
-                  try { await exportAllPicks(); }
-                  finally { setExporting(false); }
-                }}
-              >
-                {exporting ? "Generating…" : "📥 Export All Picks (.xlsx)"}
-              </button>
+              {isPast(GLOBAL_DEADLINE) ? (
+                <button
+                  className="tab"
+                  style={{ fontSize: 13, padding: "10px 20px" }}
+                  disabled={exporting}
+                  onClick={async () => {
+                    setExporting(true);
+                    try { await exportAllPicks(); }
+                    finally { setExporting(false); }
+                  }}
+                >
+                  {exporting ? "Generating…" : "📥 Export All Picks (.xlsx)"}
+                </button>
+              ) : (
+                <span style={{ fontSize: 12, color: "var(--text-dark)" }}>
+                  🔒 Export available after global deadline (10 Jun 2026 23:59)
+                </span>
+              )}
             </div>
           </>
         )}
