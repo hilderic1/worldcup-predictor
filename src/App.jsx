@@ -9,6 +9,7 @@ import {
   scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking
 } from "./utils";
 import KoMatchGrid from "./components/KoMatchGrid";
+import { exportAllPicks } from "./utils/exportReport";
 import Dashboard from "./pages/Dashboard";
 import Picks from "./pages/Picks";
 import Leaderboard from "./pages/Leaderboard";
@@ -56,6 +57,7 @@ export default function App() {
   const [nudgeData, setNudgeData] = useState(null);
   const [nudgeLoading, setNudgeLoading] = useState(false);
   const [nudgeSent, setNudgeSent] = useState({});
+  const [exporting, setExporting] = useState(false);
 
   // Admin UI state
   const [adminTab, setAdminTab] = useState("fixtures");
@@ -1140,13 +1142,25 @@ export default function App() {
               </div>
             )}
 
-            <div className="save-row">
+            <div className="save-row" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 className={`btn-save ${saveState === "saved" ? "saved" : ""}`}
                 disabled={saveState === "saving"}
                 onClick={saveActuals}
               >
                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Results"}
+              </button>
+              <button
+                className="tab"
+                style={{ fontSize: 13, padding: "10px 20px" }}
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try { await exportAllPicks(); }
+                  finally { setExporting(false); }
+                }}
+              >
+                {exporting ? "Generating…" : "📥 Export All Picks (.xlsx)"}
               </button>
             </div>
           </>
