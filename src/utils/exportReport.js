@@ -141,29 +141,36 @@ function buildPlayerSheet(XLSX, preds, fixtures = {}) {
   rows.push((preds.sfRank || []).map(t => t || ""));
   rows.push([]);
 
-  // ── KO match score predictions ──
-  const hasKO = KO_ROUNDS.some(r => (preds.koMatches[r.id] || []).some(Boolean));
-  if (hasKO) {
+  // ── KO match score predictions — only include rounds that have started ──
+  const startedRounds = KO_ROUNDS.filter(r =>
+    r.firstKickoff && new Date() >= new Date(r.firstKickoff)
+  );
+  const hasKO = startedRounds.some(r => (preds.koMatches[r.id] || []).some(Boolean));
+  if (startedRounds.length > 0) {
     rows.push(["KNOCKOUT ROUND — MATCH SCORE PREDICTIONS"]);
-    rows.push(["Round", "Match #", "Home Team", "Pred Home", "Pred Away", "Away Team"]);
-    KO_ROUNDS.forEach(r => {
-      const rFixtures = fixtures[r.id] || [];
-      const rPreds    = preds.koMatches[r.id] || [];
-      rFixtures.forEach((fix, i) => {
-        if (!fix?.home) return;
-        const p  = rPreds[i] || {};
-        const hs = p.home_score;
-        const as = p.away_score;
-        rows.push([
-          r.label,
-          i + 1,
-          fix.home,
-          hs != null ? hs : "",
-          as != null ? as : "",
-          fix.away,
-        ]);
+    if (!hasKO) {
+      rows.push(["(no KO score predictions entered yet for started rounds)"]);
+    } else {
+      rows.push(["Round", "Match #", "Home Team", "Pred Home", "Pred Away", "Away Team"]);
+      startedRounds.forEach(r => {
+        const rFixtures = fixtures[r.id] || [];
+        const rPreds    = preds.koMatches[r.id] || [];
+        rFixtures.forEach((fix, i) => {
+          if (!fix?.home) return;
+          const p  = rPreds[i] || {};
+          const hs = p.home_score;
+          const as = p.away_score;
+          rows.push([
+            r.label,
+            i + 1,
+            fix.home,
+            hs != null ? hs : "",
+            as != null ? as : "",
+            fix.away,
+          ]);
+        });
       });
-    });
+    }
   }
 
   return XLSX.utils.aoa_to_sheet(rows);
