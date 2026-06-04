@@ -260,7 +260,7 @@ body {
 .deadline-table td.past { color: var(--text-dark); }
 .deadline-table td.open { color: var(--accent-green); font-weight: 600; }
 
-.fixture-row { display: grid; grid-template-columns: 32px 1fr 48px 16px 48px 1fr; align-items: center; gap: 8px; background: var(--bg-main); border: 1px solid var(--border-dark); border-radius: 12px; padding: 10px 14px; margin-bottom: 8px; transition: border-color .2s ease; }
+.fixture-row { display: grid; grid-template-columns: 32px 1fr 48px 1fr; align-items: center; gap: 8px; background: var(--bg-main); border: 1px solid var(--border-dark); border-radius: 12px; padding: 10px 14px; margin-bottom: 8px; transition: border-color .2s ease; }
 .fixture-row:hover { border-color: var(--border-light); }
 .fixture-num { font-size: 12px; color: var(--text-muted); text-align: center; font-weight: 600; }
 .fixture-sel { background: var(--bg-card); border: 1px solid var(--border-light); color: var(--text-main); padding: 8px 10px; border-radius: 8px; font-size: 13px; font-family: 'DM Sans'; cursor: pointer; width: 100%; transition: all .2s ease; }
@@ -405,7 +405,7 @@ body {
   
   .tab { padding: 6px 14px; font-size: 12px; }
   
-  .fixture-row { grid-template-columns: 24px 1fr 30px 10px 30px 1fr; gap: 4px; padding: 10px; }
+  .fixture-row { grid-template-columns: 24px 1fr 30px 1fr; gap: 4px; padding: 10px; }
   .fixture-sel { padding: 6px; font-size: 11px; }
 
   /* Mobile chart styles */
