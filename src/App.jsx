@@ -778,6 +778,7 @@ export default function App() {
             history={leaderboardHistory}
             loading={leaderboardLoading}
             onRefresh={loadLeaderboard}
+            player={player}
           />
         )}
 

@@ -2,10 +2,10 @@ import { useState, useMemo } from "react";
 import { GLOBAL_DEADLINE, PLAYERS, PLAYER_COLORS } from "../constants";
 import { isPast } from "../utils";
 
-function ScoreHistoryChart({ history }) {
+function ScoreHistoryChart({ history, restrictedToPlayer }) {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const [hoveredPlayer, setHoveredPlayer] = useState(null);
-  const [selectedPlayers, setSelectedPlayers] = useState(PLAYERS);
+  const [selectedPlayers, setSelectedPlayers] = useState(restrictedToPlayer ? [restrictedToPlayer] : PLAYERS);
 
   // Setup dimensions
   const width = 800;
@@ -387,9 +387,21 @@ function ScoreHistoryChart({ history }) {
   );
 }
 
-export default function Leaderboard({ leaderboard, history = [], loading, onRefresh }) {
+export default function Leaderboard({ leaderboard, history = [], loading, onRefresh, player }) {
   const [activeTab, setActiveTab] = useState("standings");
   const globalLocked = isPast(GLOBAL_DEADLINE);
+
+  // Filter for linked admins: only show their own player
+  const isLinkedAdmin = player?.is_admin && player?.linked_player;
+  const filteredLeaderboard = isLinkedAdmin
+    ? leaderboard.filter(entry => entry.name === player.linked_player)
+    : leaderboard;
+  const filteredHistory = isLinkedAdmin
+    ? history.map(h => ({
+        ...h,
+        scores: { [player.linked_player]: h.scores[player.linked_player] || 0 }
+      }))
+    : history;
 
   return (
     <>
@@ -397,6 +409,12 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
         <div className="section-title">🏆 Leaderboard</div>
         <button className="btn-sm" onClick={onRefresh}>↻ Refresh</button>
       </div>
+
+      {isLinkedAdmin && (
+        <div className="notice info">
+          🔒 Restricted view: showing only <strong>{player.linked_player}</strong>'s standings.
+        </div>
+      )}
 
       {!globalLocked && (
         <div className="notice info">
@@ -423,7 +441,7 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
         <div className="spinner">Calculating…</div>
       ) : activeTab === "standings" ? (
         <div className="lb-list">
-          {leaderboard.map((e, idx) => (
+          {filteredLeaderboard.map((e, idx) => (
             <div
               key={e.name}
               className={`lb-row ${idx === 0 ? "r1" : idx === 1 ? "r2" : idx === 2 ? "r3" : ""}`}
@@ -443,7 +461,7 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
           ))}
         </div>
       ) : (
-        <ScoreHistoryChart history={history} />
+        <ScoreHistoryChart history={filteredHistory} restrictedToPlayer={isLinkedAdmin ? player.linked_player : null} />
       )}
     </>
   );
