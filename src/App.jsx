@@ -647,7 +647,7 @@ export default function App() {
           </div>
           <nav className="nav">
             {player && <span className="nav-user">👤 {player.name}</span>}
-            {player && !player.is_admin && (
+            {player && (
               <>
                 <button
                   className={`nav-pill ${view === "dashboard" ? "active" : ""}`}
@@ -744,7 +744,7 @@ export default function App() {
         )}
 
         {/* DASHBOARD */}
-        {view === "dashboard" && player && !player.is_admin && (
+        {view === "dashboard" && player && (
           <Dashboard
             player={player}
             lastLogin={player.last_login}
@@ -757,7 +757,7 @@ export default function App() {
         )}
 
         {/* PICKS */}
-        {view === "picks" && player && !player.is_admin && (
+        {view === "picks" && player && (
           <Picks
             player={player}
             actualMatches={actualMatches}
@@ -782,7 +782,7 @@ export default function App() {
         )}
 
         {/* PROFILE */}
-        {view === "profile" && player && !player.is_admin && (
+        {view === "profile" && player && (
           <Profile player={player} />
         )}
 
