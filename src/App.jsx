@@ -9,7 +9,7 @@ import {
   scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking
 } from "./utils";
 import KoMatchGrid from "./components/KoMatchGrid";
-import { exportAllPicks } from "./utils/exportReport";
+import { exportAllPicks, exportMyPicks } from "./utils/exportReport";
 import Dashboard from "./pages/Dashboard";
 import Picks from "./pages/Picks";
 import Leaderboard from "./pages/Leaderboard";
@@ -1215,11 +1215,18 @@ export default function App() {
                   disabled={exporting}
                   onClick={async () => {
                     setExporting(true);
-                    try { await exportAllPicks(); }
-                    finally { setExporting(false); }
+                    try {
+                      if (player?.linked_player) {
+                        await exportMyPicks(player.linked_player);
+                      } else {
+                        await exportAllPicks();
+                      }
+                    } finally { setExporting(false); }
                   }}
                 >
-                  {exporting ? "Generating…" : "📥 Export All Picks (.xlsx)"}
+                  {exporting ? "Generating…" : player?.linked_player
+                    ? `📥 Export ${player.linked_player}'s Picks (.xlsx)`
+                    : "📥 Export All Picks (.xlsx)"}
                 </button>
               ) : (
                 <span style={{ fontSize: 12, color: "var(--text-dark)" }}>
