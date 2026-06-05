@@ -412,7 +412,7 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
 
       {isLinkedAdmin && (
         <div className="notice info">
-          🔒 Restricted view: showing only <strong>{player.linked_player}</strong>'s standings.
+          🔒 <strong>Restricted view:</strong> showing only <strong>{player?.linked_player}</strong>'s standings. ({filteredLeaderboard.length} entry shown)
         </div>
       )}
 
