@@ -806,6 +806,13 @@ export default function App() {
           <>
             <div className="section-title" style={{ marginBottom: 18 }}>🔧 Admin Panel</div>
 
+            {player?.linked_player && (
+              <div className="notice info" style={{ marginBottom: 16 }}>
+                🔒 <strong>Restricted access:</strong> You can only view and manage data for <strong>{player.linked_player}</strong>.
+                Your test mode scorecard and exports are limited to this player only.
+              </div>
+            )}
+
             {/* Test mode toggle */}
             <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "14px 18px", border: testPhase ? "1px solid #f0c030" : "1px solid #2a3a5a" }}>
               {testPhase ? (
