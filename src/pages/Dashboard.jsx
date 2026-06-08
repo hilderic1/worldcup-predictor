@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
 import { GLOBAL_DEADLINE, KO_ROUNDS, GROUPS, GROUP_MATCHES, f } from "../constants";
 import { isPast, currentOpenRound } from "../utils";
 import FIFA_TABLE from "../data/fifaTable";
+import { FIFA_RANKINGS, OPTA_WIN_PCT } from "../data/teamStrengths";
 
 const SCORE_CATEGORIES = [
   { key: "matchPts",   label: "Group Scores",       icon: "⚽", desc: "Match result + accuracy + exact" },
@@ -77,27 +78,32 @@ function calcH2H(teamNames, matches, preds) {
  *   H2H pts → H2H GD → H2H GF → overall GD → overall GF → colour tie
  * Returns { sorted, tiedTeams: Set<string> }
  */
+// FIFA tiebreaker: lower rank number = stronger team (rank 1 beats rank 50)
+function fifaRank(team) { return FIFA_RANKINGS[team] ?? 999; }
+
 function sortTiedGroup(group, matches, preds) {
   if (group.length === 1) return { sorted: group, tiedTeams: new Set() };
   const h = calcH2H(group.map(t => t.team), matches, preds);
 
   const sorted = [...group].sort((a, b) => {
     const ah = h[a.team], bh = h[b.team];
-    if (bh.points !== ah.points) return bh.points - ah.points;
-    if (bh.gd     !== ah.gd)     return bh.gd     - ah.gd;
-    if (bh.gf     !== ah.gf)     return bh.gf     - ah.gf;
-    if (b.gd      !== a.gd)      return b.gd      - a.gd;
-    if (b.gf      !== a.gf)      return b.gf      - a.gf;
-    return 0; // colour tie — fair play / FIFA ranking not available
+    if (bh.points !== ah.points) return bh.points - ah.points; // H2H pts
+    if (bh.gd     !== ah.gd)     return bh.gd     - ah.gd;     // H2H GD
+    if (bh.gf     !== ah.gf)     return bh.gf     - ah.gf;     // H2H GF
+    if (b.gd      !== a.gd)      return b.gd      - a.gd;      // overall GD
+    if (b.gf      !== a.gf)      return b.gf      - a.gf;      // overall GF
+    const ra = fifaRank(a.team), rb = fifaRank(b.team);
+    if (ra !== rb)               return ra - rb;                // FIFA ranking
+    return 0; // true colour tie — fair play cards required
   });
 
-  // Mark teams still equal after all available criteria
+  // Only mark as tied if ALL criteria including FIFA ranking are equal
   const tiedTeams = new Set();
   for (let i = 0; i < sorted.length - 1; i++) {
     const a = sorted[i], b = sorted[i + 1];
     const ah = h[a.team], bh = h[b.team];
     if (bh.points === ah.points && bh.gd === ah.gd && bh.gf === ah.gf &&
-        b.gd === a.gd && b.gf === a.gf) {
+        b.gd === a.gd && b.gf === a.gf && fifaRank(a.team) === fifaRank(b.team)) {
       tiedTeams.add(a.team);
       tiedTeams.add(b.team);
     }
@@ -205,9 +211,80 @@ function buildR32Bracket(groupStandings, selectedThirds) {
   });
 }
 
+
+// ── Full bracket simulation ────────────────────────────────────────────────
+
+/**
+ * Given the 16 R32 matches (from buildR32Bracket) and a strength source,
+ * simulate every round through the Final and 3rd-place match.
+ *
+ * source: 'opta' | 'fifa'
+ * Returns: { r16Matches, r16Winners, qfMatches, qfWinners,
+ *             sfMatches, sfWinners, sfLosers,
+ *             finalMatch, thirdMatch, ranking:[1st,2nd,3rd,4th] }
+ */
+function simulateFullBracket(r32Matches, source, strengths) {
+  const fifaRanks = strengths?.fifa || FIFA_RANKINGS;
+  const optaPcts  = strengths?.opta || OPTA_WIN_PCT;
+
+  function stronger(a, b) {
+    if (!a || a === "?") return b || "";
+    if (!b || b === "?") return a || "";
+    if (source === "fifa") {
+      return (fifaRanks[a] ?? 999) <= (fifaRanks[b] ?? 999) ? a : b;
+    }
+    return (optaPcts[a] ?? 0) >= (optaPcts[b] ?? 0) ? a : b;
+  }
+
+  // R32 → 16 winners
+  const r32Winners = r32Matches.map(m => stronger(m.home.team, m.away.team));
+
+  // R16 — consecutive pairs from R32 bracket (M73-88 pairs: 0-1, 2-3, …)
+  const r16Matches = [];
+  const r16Winners = [];
+  for (let i = 0; i < 16; i += 2) {
+    const h = r32Winners[i], a = r32Winners[i + 1];
+    r16Matches.push({ home: h, away: a });
+    r16Winners.push(stronger(h, a));
+  }
+
+  // QF — consecutive pairs from R16
+  const qfMatches = [];
+  const qfWinners = [];
+  for (let i = 0; i < 8; i += 2) {
+    const h = r16Winners[i], a = r16Winners[i + 1];
+    qfMatches.push({ home: h, away: a });
+    qfWinners.push(stronger(h, a));
+  }
+
+  // SF — consecutive pairs from QF
+  const sfMatches = [
+    { home: qfWinners[0], away: qfWinners[1] },
+    { home: qfWinners[2], away: qfWinners[3] },
+  ];
+  const sfWinners = sfMatches.map(m => stronger(m.home, m.away));
+  const sfLosers  = sfMatches.map((m, i) => sfWinners[i] === m.home ? m.away : m.home);
+
+  // Final & 3rd place
+  const finalMatch      = { home: sfWinners[0],  away: sfWinners[1]  };
+  const thirdPlaceMatch = { home: sfLosers[0],   away: sfLosers[1]   };
+  const champion  = stronger(sfWinners[0], sfWinners[1]);
+  const runnerUp  = champion === sfWinners[0] ? sfWinners[1] : sfWinners[0];
+  const third     = stronger(sfLosers[0],  sfLosers[1]);
+  const fourth    = third === sfLosers[0]  ? sfLosers[1]  : sfLosers[0];
+
+  return {
+    r16Matches, r16Winners,
+    qfMatches,  qfWinners,
+    sfMatches,  sfWinners, sfLosers,
+    finalMatch, thirdPlaceMatch,
+    ranking: [champion, runnerUp, third, fourth],
+  };
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
-export default function Dashboard({ player, lastLogin, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead }) {
+export default function Dashboard({ player, lastLogin, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead, teamStrengths }) {
   const openRound  = currentOpenRound();
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
@@ -271,7 +348,8 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
     thirds.sort((a, b) =>
       b.points !== a.points ? b.points - a.points :
       b.gd     !== a.gd     ? b.gd     - a.gd     :
-      b.gf     !== a.gf     ? b.gf     - a.gf     : 0
+      b.gf     !== a.gf     ? b.gf     - a.gf     :
+      fifaRank(a.team) - fifaRank(b.team) // FIFA ranking tiebreaker
     );
     setRankedThirds(thirds);
     // Auto-select top 8; user can adjust any tied border teams
@@ -286,7 +364,41 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
     }
   }, [groupStandings, selectedThirds]);
 
-  // Which simulation tile is open: null | 'groups' | 'r32'
+  // Bracket simulation source + derived result
+  const [simSource,     setSimSource]     = useState("opta"); // 'opta' | 'fifa'
+  const [applyingPicks, setApplyingPicks] = useState(false);
+  const [picksApplied,  setPicksApplied]  = useState(false);
+
+  const r32Ready = r32Matches.length === 16 &&
+    r32Matches.every(m => m.home.team && m.home.team !== "?" &&
+                          m.away.team && m.away.team !== "?");
+
+  const simResult = useMemo(() => {
+    if (!r32Ready) return null;
+    return simulateFullBracket(r32Matches, simSource, teamStrengths);
+  }, [r32Matches, r32Ready, simSource, teamStrengths]);
+
+  async function applySimToPicks() {
+    if (!simResult || !player?.name) return;
+    setApplyingPicks(true);
+    setPicksApplied(false);
+    try {
+      const r32Teams = r32Matches.flatMap(m => [m.home.team, m.away.team]).filter(t => t && t !== "?");
+      const rows = [
+        { player_name: player.name, round: "R32",     teams: r32Teams },
+        { player_name: player.name, round: "R16",     teams: simResult.r16Winners },
+        { player_name: player.name, round: "QF",      teams: simResult.qfWinners },
+        { player_name: player.name, round: "SF_RANK", teams: simResult.ranking },
+      ];
+      await supabase.from("knockout_predictions").upsert(rows, { onConflict: "player_name,round" });
+      setPicksApplied(true);
+      setTimeout(() => setPicksApplied(false), 4000);
+    } finally {
+      setApplyingPicks(false);
+    }
+  }
+
+  // Which simulation tile is open: null | 'groups' | 'r32' | 'bracket'
   const [simTile, setSimTile] = useState(null);
   function toggleTile(key) { setSimTile(prev => prev === key ? null : key); }
 
@@ -429,6 +541,20 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
           </div>
         </button>
 
+        {/* ── Full Tournament Bracket tile ── */}
+        <button
+          className={`dashboard-action-card ${simTile === "bracket" ? "active" : ""}`}
+          onClick={() => toggleTile("bracket")}
+          style={simTile === "bracket" ? { borderColor: "#4caf80", background: "rgba(76,175,128,0.07)" } : {}}
+        >
+          <div className="dashboard-action-icon">🏆</div>
+          <div className="dashboard-action-label">Full Bracket</div>
+          <div className="dashboard-action-desc">Simulate R16 → Final &amp; apply to picks</div>
+          <div style={{ fontSize: 10, color: "#4caf80", marginTop: 6 }}>
+            {simTile === "bracket" ? "▲ collapse" : "▼ expand"}
+          </div>
+        </button>
+
       </div>
 
       {/* ── Group Standings panel ── */}
@@ -503,7 +629,7 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
               </div>
               <div style={{ marginTop: 12, display: "flex", gap: 16, fontSize: 11, flexWrap: "wrap" }}>
                 <span style={{ color: "#c8d8f0" }}>■ Advances (top 2)</span>
-                <span style={{ color: "#f0c030" }}>■ Colour tie — fair play &amp; FIFA ranking unavailable</span>
+                <span style={{ color: "#f0c030" }}>■ Colour tie — only fair play (cards) can separate these teams</span>
               </div>
               {anyTies && (
                 <div className="notice warn" style={{ marginTop: 8, fontSize: 11 }}>
@@ -529,10 +655,14 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
             <>
               {/* ── 3rd-place qualifier selector ── */}
               {(() => {
-                // Identify border stats: the stats of the 8th-best team
-                const t8stats = rankedThirds[7];
-                const isBorder = t => t8stats &&
-                  t.points === t8stats.points && t.gd === t8stats.gd && t.gf === t8stats.gf;
+                // Border = 8th and 9th teams are genuinely tied on ALL criteria incl. FIFA rank
+                const t8 = rankedThirds[7], t9 = rankedThirds[8];
+                const hasActualTie = t8 && t9 &&
+                  t8.points === t9.points && t8.gd === t9.gd && t8.gf === t9.gf &&
+                  fifaRank(t8.team) === fifaRank(t9.team);
+                const isBorder = t => hasActualTie &&
+                  t.points === t8.points && t.gd === t8.gd && t.gf === t8.gf &&
+                  fifaRank(t.team) === fifaRank(t8.team);
                 const isCertainIn  = t => !isBorder(t) && selectedThirds.has(t.grp);
                 const isCertainOut = t => !isBorder(t) && !selectedThirds.has(t.grp);
 
@@ -626,7 +756,7 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
                     </table>
                     {rankedThirds.some(t => isBorder(t)) && (
                       <div style={{fontSize:11,color:"#f0c030",marginTop:6}}>
-                        ⚠ Tied teams highlighted — click to swap which advances. Fair play &amp; FIFA ranking not available.
+                        ⚠ These teams are identical on all criteria including FIFA ranking — only fair play (cards) can separate them. Click to manually choose which advances.
                       </div>
                     )}
                   </div>
@@ -674,6 +804,158 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
                 })}
               </div>
 
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Full Tournament Bracket panel ── */}
+      {simTile === "bracket" && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <div className="card-label">
+            Full Tournament Bracket — simulated from your R32 predictions
+          </div>
+
+          {/* Source selector */}
+          <div style={{ display: "flex", gap: 10, marginTop: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--text-dark)" }}>Strength source:</span>
+            {[
+              { key: "opta", label: "🤖 Opta Supercomputer", desc: "Win probability model" },
+              { key: "fifa", label: "🌍 FIFA Ranking",       desc: "Apr 2026 official rankings" },
+            ].map(opt => (
+              <button
+                key={opt.key}
+                onClick={() => setSimSource(opt.key)}
+                style={{
+                  fontSize: 12, padding: "6px 14px", borderRadius: 20, cursor: "pointer",
+                  border: "1px solid",
+                  borderColor:  simSource === opt.key ? "#4caf80" : "#2a3a5a",
+                  background:   simSource === opt.key ? "rgba(76,175,128,0.15)" : "transparent",
+                  color:        simSource === opt.key ? "#4caf80" : "var(--text-dark)",
+                  fontWeight:   simSource === opt.key ? 700 : 400,
+                }}
+              >
+                {opt.label}
+                <span style={{ fontSize: 10, marginLeft: 6, opacity: 0.7 }}>{opt.desc}</span>
+              </button>
+            ))}
+          </div>
+
+          {!r32Ready ? (
+            <div className="notice info">
+              Enter all 72 group match score predictions (My Picks → Group Scores), then open the
+              Round of 32 panel above to confirm the 8 qualifying 3rd-place teams.
+              The simulation will appear here once the bracket is fully resolved.
+            </div>
+          ) : !simResult ? (
+            <div className="spinner">Simulating…</div>
+          ) : (
+            <>
+              {/* Final ranking banner */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 8, marginBottom: 20,
+                background: "#070f1c", borderRadius: 8, padding: 12,
+              }}>
+                {[
+                  { medal: "🥇", label: "Champion",   team: simResult.ranking[0] },
+                  { medal: "🥈", label: "Runner-up",  team: simResult.ranking[1] },
+                  { medal: "🥉", label: "3rd Place",  team: simResult.ranking[2] },
+                  { medal: "4️⃣", label: "4th Place",  team: simResult.ranking[3] },
+                ].map(({ medal, label, team }) => (
+                  <div key={label} style={{ textAlign: "center", padding: "8px 4px" }}>
+                    <div style={{ fontSize: 20 }}>{medal}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dark)", marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#f0c030", lineHeight: 1.3 }}>
+                      {f(team)} {team}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Round-by-round matches */}
+              {[
+                { label: "Round of 16",    matches: simResult.r16Matches,   winners: simResult.r16Winners    },
+                { label: "Quarter-Finals", matches: simResult.qfMatches,    winners: simResult.qfWinners     },
+                { label: "Semi-Finals",    matches: simResult.sfMatches,    winners: simResult.sfWinners     },
+                { label: "3rd Place",      matches: [simResult.thirdPlaceMatch], winners: [simResult.ranking[2]] },
+                { label: "Final",          matches: [simResult.finalMatch],  winners: [simResult.ranking[0]]  },
+              ].map(({ label, matches, winners }) => (
+                <div key={label} style={{ marginBottom: 14 }}>
+                  <div style={{
+                    fontSize: 10, letterSpacing: 2, textTransform: "uppercase",
+                    color: "#4caf80", fontWeight: 700, marginBottom: 6,
+                  }}>
+                    {label}
+                  </div>
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                    gap: 5,
+                  }}>
+                    {matches.map((m, i) => {
+                      const winner = winners[i];
+                      return (
+                        <div key={i} style={{
+                          background: "#0a1628", borderRadius: 6, padding: "7px 12px",
+                          display: "grid", gridTemplateColumns: "1fr auto 1fr",
+                          gap: 6, alignItems: "center",
+                        }}>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{
+                              fontSize: 12, fontWeight: 700,
+                              color: m.home === winner ? "#f0c030" : "var(--text-dark)",
+                              whiteSpace: "nowrap",
+                            }}>
+                              {f(m.home)} {m.home}
+                              {m.home === winner && <span style={{ marginLeft: 4 }}>✓</span>}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--text-dark)", textAlign: "center" }}>vs</div>
+                          <div style={{ textAlign: "left" }}>
+                            <div style={{
+                              fontSize: 12, fontWeight: 700,
+                              color: m.away === winner ? "#f0c030" : "var(--text-dark)",
+                              whiteSpace: "nowrap",
+                            }}>
+                              {m.away === winner && <span style={{ marginRight: 4 }}>✓</span>}
+                              {f(m.away)} {m.away}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {/* Strength reference */}
+              <div style={{ fontSize: 11, color: "var(--text-dark)", marginTop: 8, marginBottom: 16 }}>
+                {simSource === "opta"
+                  ? "Source: Opta Supercomputer — 25,000 pre-tournament simulations (win %). Stronger team always advances."
+                  : "Source: FIFA Rankings April 2026. Lower-ranked (better) team always advances."}
+              </div>
+
+              {/* Apply to picks */}
+              <div style={{ borderTop: "1px solid #1a2a3a", paddingTop: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  className="btn-save"
+                  style={{ background: "#1a5c38", borderColor: "#4caf80", width: "auto" }}
+                  onClick={applySimToPicks}
+                  disabled={applyingPicks}
+                >
+                  {applyingPicks ? "Saving…" : "⚡ Apply simulation to my KO picks"}
+                </button>
+                {picksApplied && (
+                  <span style={{ color: "#4caf80", fontSize: 13, fontWeight: 700 }}>
+                    ✓ Picks saved! Go to My Picks to review.
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                  Overwrites your current R32 → QF qualifier picks and final standings.
+                </span>
+              </div>
             </>
           )}
         </div>

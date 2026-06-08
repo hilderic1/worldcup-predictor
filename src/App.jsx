@@ -87,6 +87,25 @@ export default function App() {
   // Messages (for logged-in non-admin player)
   const [messages, setMessages] = useState([]);
 
+  // Team strengths (from DB; used by bracket simulation)
+  const [teamStrengths, setTeamStrengths] = useState(null);
+  const loadTeamStrengths = useCallback(async () => {
+    const { data } = await supabase.from("team_strengths").select("*");
+    if (!data?.length) return;
+    const fifa = {}, opta = {};
+    data.forEach(r => {
+      if (r.fifa_rank      != null) fifa[r.team_name]  = r.fifa_rank;
+      if (r.opta_win_pct   != null) opta[r.team_name]  = +r.opta_win_pct;
+    });
+    setTeamStrengths({ fifa, opta });
+  }, []);
+  useEffect(() => { loadTeamStrengths(); }, [loadTeamStrengths]);
+
+  // Admin strengths editor state
+  const [strengthsEdits,  setStrengthsEdits]  = useState({});  // { teamName: { fifa_rank, opta_win_pct } }
+  const [strengthsSaving, setStrengthsSaving] = useState(false);
+  const [strengthsSaved,  setStrengthsSaved]  = useState(false);
+
   // Admin nudge tab state
   const [nudgeData, setNudgeData] = useState(null);
   const [nudgeLoading, setNudgeLoading] = useState(false);
@@ -570,11 +589,12 @@ export default function App() {
     if (futureGroups.length)
       await supabase.from("actual_group_rankings").delete().in("group_id", futureGroups);
 
-    // Delete KO scores and qualifier results for rounds not yet started
+    // Delete KO scores, qualifier results, AND fixtures for rounds not yet started
     const futureRoundIds = KO_ROUNDS.filter(r => !roundStarted(r)).map(r => r.id);
     if (futureRoundIds.length) {
       await supabase.from("ko_actual_scores").delete().in("round", futureRoundIds);
       await supabase.from("actual_knockout").delete().in("round", futureRoundIds);
+      await supabase.from("ko_fixtures").delete().in("round", futureRoundIds);
     }
 
     // Turn off test mode
@@ -753,6 +773,7 @@ export default function App() {
             onNavigate={navigateTo}
             messages={messages}
             onMarkRead={markMessageRead}
+            teamStrengths={teamStrengths}
           />
         )}
 
@@ -905,12 +926,13 @@ export default function App() {
 
             <div className="tab-row">
               {[
-                ["fixtures", "🔧 KO Fixtures"],
-                ["results", "⚽ Group Results"],
-                ["groups", "📊 Group Top 3"],
+                ["fixtures",   "🔧 KO Fixtures"],
+                ["results",    "⚽ Group Results"],
+                ["groups",     "📊 Group Top 3"],
                 ["ko_results", "🏆 KO Results"],
                 ["qualifiers", "👥 Qualifiers"],
-                ["nudge", "📬 Nudge Players"],
+                ["nudge",      "📬 Nudge Players"],
+                ["strengths",  "💪 Team Strengths"],
               ].map(([k, l]) => (
                 <button
                   key={k}
@@ -1130,6 +1152,134 @@ export default function App() {
                 </div>
               </>
             )}
+
+            {/* TEAM STRENGTHS */}
+            {adminTab === "strengths" && (() => {
+              // Merge DB values with any unsaved local edits for display
+              const rows = ALL_TEAMS.map(name => {
+                const db  = { fifa_rank: teamStrengths?.fifa?.[name] ?? "", opta_win_pct: teamStrengths?.opta?.[name] ?? "" };
+                const ed  = strengthsEdits[name] || {};
+                return {
+                  name,
+                  fifa_rank:    ed.fifa_rank    !== undefined ? ed.fifa_rank    : db.fifa_rank,
+                  opta_win_pct: ed.opta_win_pct !== undefined ? ed.opta_win_pct : db.opta_win_pct,
+                };
+              }).sort((a, b) => (+a.fifa_rank || 999) - (+b.fifa_rank || 999));
+
+              function setField(name, field, val) {
+                setStrengthsEdits(prev => ({
+                  ...prev,
+                  [name]: { ...(prev[name] || {}), [field]: val },
+                }));
+              }
+
+              async function saveStrengths() {
+                if (!Object.keys(strengthsEdits).length) return;
+                setStrengthsSaving(true);
+                setStrengthsSaved(false);
+                try {
+                  const upsertRows = Object.entries(strengthsEdits).map(([team_name, ed]) => ({
+                    team_name,
+                    fifa_rank:    ed.fifa_rank    !== "" ? +ed.fifa_rank    : null,
+                    opta_win_pct: ed.opta_win_pct !== "" ? +ed.opta_win_pct : null,
+                  }));
+                  await supabase.from("team_strengths").upsert(upsertRows, { onConflict: "team_name" });
+                  setStrengthsEdits({});
+                  await loadTeamStrengths();
+                  setStrengthsSaved(true);
+                  setTimeout(() => setStrengthsSaved(false), 3000);
+                } finally {
+                  setStrengthsSaving(false);
+                }
+              }
+
+              const dirty = Object.keys(strengthsEdits).length > 0;
+
+              return (
+                <div className="card">
+                  <div className="card-label">
+                    Team Strengths — used by the bracket simulation on the Dashboard
+                  </div>
+                  <p style={{ fontSize: 12, color: "var(--text-dark)", margin: "8px 0 12px" }}>
+                    Edit FIFA ranking (lower = stronger) and Opta win probability (%) for each team.
+                    Changes apply immediately to everyone's bracket simulation after saving.
+                    For a new tournament: update all values here — no code changes needed.
+                  </p>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="deadline-table" style={{ width: "100%", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left" }}>#</th>
+                          <th style={{ textAlign: "left" }}>Team</th>
+                          <th style={{ width: 90 }}>FIFA Rank</th>
+                          <th style={{ width: 110 }}>Opta Win %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row, idx) => {
+                          const changed = !!strengthsEdits[row.name];
+                          return (
+                            <tr key={row.name} style={{ borderBottom: "1px solid #0e1a2e", background: changed ? "rgba(240,192,48,0.05)" : undefined }}>
+                              <td style={{ color: "var(--text-dark)", padding: "4px 6px" }}>{idx + 1}</td>
+                              <td style={{ padding: "4px 6px", fontWeight: changed ? 700 : 400, color: changed ? "#f0c030" : undefined }}>
+                                {f(row.name)} {row.name}
+                              </td>
+                              <td style={{ padding: "4px 6px", textAlign: "center" }}>
+                                <input
+                                  type="number" min="1" max="250"
+                                  value={row.fifa_rank}
+                                  onChange={e => setField(row.name, "fifa_rank", e.target.value)}
+                                  style={{
+                                    width: 70, textAlign: "center", background: "#0a1628",
+                                    border: "1px solid #2a3a5a", borderRadius: 4,
+                                    color: "var(--text-main)", padding: "3px 6px", fontSize: 12,
+                                  }}
+                                />
+                              </td>
+                              <td style={{ padding: "4px 6px", textAlign: "center" }}>
+                                <input
+                                  type="number" min="0" max="100" step="0.01"
+                                  value={row.opta_win_pct}
+                                  onChange={e => setField(row.name, "opta_win_pct", e.target.value)}
+                                  style={{
+                                    width: 80, textAlign: "center", background: "#0a1628",
+                                    border: "1px solid #2a3a5a", borderRadius: 4,
+                                    color: "var(--text-main)", padding: "3px 6px", fontSize: 12,
+                                  }}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+                    <button
+                      className="btn-save"
+                      disabled={!dirty || strengthsSaving}
+                      onClick={saveStrengths}
+                      style={{ width: "auto", opacity: dirty ? 1 : 0.4 }}
+                    >
+                      {strengthsSaving ? "Saving…" : `💾 Save Changes${dirty ? ` (${Object.keys(strengthsEdits).length} edited)` : ""}`}
+                    </button>
+                    {dirty && (
+                      <button className="tab" onClick={() => setStrengthsEdits({})}>
+                        ✕ Discard
+                      </button>
+                    )}
+                    {strengthsSaved && (
+                      <span style={{ color: "#4caf80", fontSize: 13, fontWeight: 700 }}>✓ Saved!</span>
+                    )}
+                    {!dirty && !strengthsSaved && (
+                      <span style={{ fontSize: 12, color: "var(--text-dark)" }}>
+                        {teamStrengths ? `${Object.keys(teamStrengths.fifa).length} teams loaded from database` : "Loading from database…"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* NUDGE PLAYERS */}
             {adminTab === "nudge" && (
