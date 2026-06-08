@@ -274,8 +274,9 @@ function simulateFullBracket(r32Matches, source, strengths) {
   const fourth    = third === sfLosers[0]  ? sfLosers[1]  : sfLosers[0];
 
   return {
-    r16Matches, r16Winners,
-    qfMatches,  qfWinners,
+    r32Winners,                        // 16 teams advancing to R16
+    r16Matches, r16Winners,            // r16Winners = 8 teams advancing to QF
+    qfMatches,  qfWinners,             // qfWinners  = 4 teams advancing to SF
     sfMatches,  sfWinners, sfLosers,
     finalMatch, thirdPlaceMatch,
     ranking: [champion, runnerUp, third, fourth],
@@ -385,10 +386,10 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
     try {
       const r32Teams = r32Matches.flatMap(m => [m.home.team, m.away.team]).filter(t => t && t !== "?");
       const rows = [
-        { player_name: player.name, round: "R32",     teams: r32Teams },
-        { player_name: player.name, round: "R16",     teams: simResult.r16Winners },
-        { player_name: player.name, round: "QF",      teams: simResult.qfWinners },
-        { player_name: player.name, round: "SF_RANK", teams: simResult.ranking },
+        { player_name: player.name, round: "R32",     teams: r32Teams },              // 32 group-stage qualifiers
+        { player_name: player.name, round: "R16",     teams: simResult.r32Winners },  // 16 R32 winners → advance to R16
+        { player_name: player.name, round: "QF",      teams: simResult.r16Winners },  // 8 R16 winners → advance to QF
+        { player_name: player.name, round: "SF_RANK", teams: simResult.ranking },     // 4 semi-finalists ranked
       ];
       await supabase.from("knockout_predictions").upsert(rows, { onConflict: "player_name,round" });
       setPicksApplied(true);
