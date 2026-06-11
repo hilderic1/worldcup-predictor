@@ -203,7 +203,7 @@ export async function exportAllPicks() {
   const wb = XLSX.utils.book_new();
 
   PLAYERS.forEach(name => {
-    const ws = buildPlayerSheet(XLSX, byPlayer[name], fixtures, true);
+    const ws = buildPlayerSheet(XLSX, byPlayer[name], fixtures, false);
     const sheetName = name.substring(0, 31).replace(/[:\\/?*[\]]/g, "_");
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });

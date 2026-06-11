@@ -1350,30 +1350,19 @@ export default function App() {
               >
                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Results"}
               </button>
-              {isPast(GLOBAL_DEADLINE) ? (
+              {!player?.linked_player && (
                 <button
                   className="tab"
                   style={{ fontSize: 13, padding: "10px 20px" }}
                   disabled={exporting}
                   onClick={async () => {
                     setExporting(true);
-                    try {
-                      if (player?.linked_player) {
-                        await exportMyPicks(player.linked_player);
-                      } else {
-                        await exportAllPicks();
-                      }
-                    } finally { setExporting(false); }
+                    try { await exportAllPicks(); }
+                    finally { setExporting(false); }
                   }}
                 >
-                  {exporting ? "Generating…" : player?.linked_player
-                    ? `📥 Export ${player.linked_player}'s Picks (.xlsx)`
-                    : "📥 Export All Picks (.xlsx)"}
+                  {exporting ? "Generating…" : "📥 Backup All Picks (.xlsx)"}
                 </button>
-              ) : (
-                <span style={{ fontSize: 12, color: "var(--text-dark)" }}>
-                  🔒 Export available after global deadline (10 Jun 2026 23:59)
-                </span>
               )}
             </div>
           </>
