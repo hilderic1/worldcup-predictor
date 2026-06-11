@@ -127,7 +127,7 @@ export default function AllPredictions({
   return (
     <>
       <div className="section-header">
-        <div className="section-title">👁 Predictions</div>
+        <div className="section-title">👁 Compare Players Picks</div>
       </div>
 
       {/* Player selectors */}

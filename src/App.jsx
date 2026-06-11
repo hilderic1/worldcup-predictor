@@ -698,7 +698,7 @@ export default function App() {
                     className={`nav-pill ${view === "predictions" ? "active" : ""}`}
                     onClick={() => navigateTo("predictions")}
                   >
-                    👁 Predictions
+                    👁 Compare Players Picks
                   </button>
                 )}
               </>
