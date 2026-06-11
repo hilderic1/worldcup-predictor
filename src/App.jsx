@@ -704,28 +704,12 @@ export default function App() {
               </>
             )}
             {player?.is_admin && (
-              <>
-                <button
-                  className={`nav-pill ${view === "admin" ? "active" : ""}`}
-                  onClick={() => setView("admin")}
-                >
-                  Admin
-                </button>
-                <button
-                  className={`nav-pill ${view === "leaderboard" ? "active" : ""}`}
-                  onClick={() => navigateTo("leaderboard")}
-                >
-                  Leaderboard
-                </button>
-                {allPicksRevealed && (
-                  <button
-                    className={`nav-pill ${view === "predictions" ? "active" : ""}`}
-                    onClick={() => navigateTo("predictions")}
-                  >
-                    👁 Predictions
-                  </button>
-                )}
-              </>
+              <button
+                className={`nav-pill ${view === "admin" ? "active" : ""}`}
+                onClick={() => setView("admin")}
+              >
+                Admin
+              </button>
             )}
             {player && (
               <button className="nav-pill" onClick={logout}>Exit</button>

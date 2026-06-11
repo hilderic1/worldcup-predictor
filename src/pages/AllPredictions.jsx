@@ -322,30 +322,54 @@ export default function AllPredictions({
               ].map(({ label, lArr, rArr, actual }) => (
                 <div key={label} className="card">
                   <div className="card-label">{label}</div>
-                  {comparing ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {comparing && rArr ? (() => {
+                    const lSet = new Set(lArr.filter(Boolean));
+                    const rSet = new Set(rArr.filter(Boolean));
+                    const shared = [...lSet].filter(t => rSet.has(t)).sort();
+                    const lOnly = [...lSet].filter(t => !rSet.has(t)).sort();
+                    const rOnly = [...rSet].filter(t => !lSet.has(t)).sort();
+                    return (
                       <div>
-                        <div style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700, marginBottom: 6 }}>{leftPlayer}</div>
-                        <div className="ko-chips">
-                          {lArr.map((team, i) => (
-                            <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
-                              {team ? <>{f(team)} {team}</> : <span style={{ color: "var(--text-dark)" }}>#{i + 1}</span>}
-                            </div>
-                          ))}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700 }}>{leftPlayer}</div>
+                          <div style={{ fontSize: 11, color: PLAYER_COLORS[rightPlayer], fontWeight: 700 }}>{rightPlayer}</div>
                         </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 11, color: PLAYER_COLORS[rightPlayer], fontWeight: 700, marginBottom: 6 }}>{rightPlayer}</div>
-                        <div className="ko-chips">
-                          {rArr.map((team, i) => (
-                            <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
-                              {team ? <>{f(team)} {team}</> : <span style={{ color: "var(--text-dark)" }}>#{i + 1}</span>}
+                        {shared.length > 0 && (
+                          <div style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 10, color: "var(--text-dark)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Both picked</div>
+                            <div className="ko-chips">
+                              {shared.map(team => (
+                                <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
+                                  {f(team)} {team}
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        )}
+                        {(lOnly.length > 0 || rOnly.length > 0) && (
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--text-dark)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Differ</div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                              <div className="ko-chips">
+                                {lOnly.map(team => (
+                                  <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`} style={{ color: PLAYER_COLORS[leftPlayer], borderColor: PLAYER_COLORS[leftPlayer] }}>
+                                    {f(team)} {team}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="ko-chips">
+                                {rOnly.map(team => (
+                                  <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`} style={{ color: PLAYER_COLORS[rightPlayer], borderColor: PLAYER_COLORS[rightPlayer] }}>
+                                    {f(team)} {team}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ) : (
+                    );
+                  })() : (
                     <div className="ko-chips">
                       {lArr.map((team, i) => (
                         <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
