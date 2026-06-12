@@ -953,37 +953,58 @@ export default function App() {
             )}
 
             {/* GROUP RESULTS */}
-            {adminTab === "results" && Object.entries(GROUPS).map(([grp]) => (
-              <div key={grp} className="card">
-                <div className="card-label">Group {grp}</div>
-                <div className="match-list">
-                  {GROUP_MATCHES.filter(m => m.group === grp).map(m => {
-                    const a       = actualMatches[m.id] || {};
-                    const canEdit = testPhase || matchStarted(m);
-                    return (
-                      <div key={m.id} className="match-row" style={{ opacity: canEdit ? 1 : 0.45 }}>
-                        <div className="team-l">{f(m.home)} {m.home}</div>
-                        <input
-                          className="score-inp" type="number" min="0" max="20"
-                          value={a.home_score ?? ""} placeholder="0"
-                          disabled={!canEdit}
-                          onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], home_score: e.target.value } }))}
-                        />
-                        <div className="sep">–</div>
-                        <input
-                          className="score-inp" type="number" min="0" max="20"
-                          value={a.away_score ?? ""} placeholder="0"
-                          disabled={!canEdit}
-                          onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], away_score: e.target.value } }))}
-                        />
-                        <div className="team-r">{m.away} {f(m.away)}</div>
-                        {!canEdit && <div style={{ gridColumn:"1/-1", fontSize:10, color:"var(--text-dark)" }}>⏳ Not started yet</div>}
+            {adminTab === "results" && (() => {
+              const sorted = [...GROUP_MATCHES].sort((a, b) => matchKickoff(a) - matchKickoff(b));
+              // Group by date label
+              const byDate = [];
+              let curDate = null;
+              sorted.forEach(m => {
+                const [mo, dy] = m.date.split("/");
+                const label = new Date(`2026-${mo.padStart(2,"0")}-${dy.padStart(2,"0")}T12:00:00Z`)
+                  .toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                if (label !== curDate) { byDate.push({ label, matches: [] }); curDate = label; }
+                byDate[byDate.length - 1].matches.push(m);
+              });
+              return (
+                <div className="card">
+                  <div className="card-label">Group stage results — in order of kick-off time</div>
+                  {byDate.map(({ label, matches }) => (
+                    <div key={label}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f0c030", margin: "14px 0 6px" }}>
+                        {label}
                       </div>
-                    );
-                  })}
+                      <div className="match-list">
+                        {matches.map(m => {
+                          const a       = actualMatches[m.id] || {};
+                          const canEdit = testPhase || matchStarted(m);
+                          return (
+                            <div key={m.id} className="match-row" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                              <div style={{ fontSize: 10, color: "var(--text-dark)", fontWeight: 700, alignSelf: "center" }}>{m.id}</div>
+                              <div className="team-l">{f(m.home)} {m.home}</div>
+                              <input
+                                className="score-inp" type="number" min="0" max="20"
+                                value={a.home_score ?? ""} placeholder="0"
+                                disabled={!canEdit}
+                                onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], home_score: e.target.value } }))}
+                              />
+                              <div className="sep">–</div>
+                              <input
+                                className="score-inp" type="number" min="0" max="20"
+                                value={a.away_score ?? ""} placeholder="0"
+                                disabled={!canEdit}
+                                onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], away_score: e.target.value } }))}
+                              />
+                              <div className="team-r">{m.away} {f(m.away)}</div>
+                              {!canEdit && <div style={{ gridColumn:"1/-1", fontSize:10, color:"var(--text-dark)" }}>⏳ Not started yet</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))}
+              );
+            })()}
 
             {/* GROUP TOP 3 */}
             {adminTab === "groups" && (
