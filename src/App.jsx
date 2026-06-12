@@ -833,7 +833,7 @@ export default function App() {
           <>
             <div className="section-title" style={{ marginBottom: 18 }}>🔧 Admin Panel</div>
 
-            {player?.linked_player && (
+            {player?.linked_player && player.linked_player !== player.name && (
               <div className="notice info" style={{ marginBottom: 16 }}>
                 🔒 <strong>Restricted access:</strong> You can only view and manage data for <strong>{player.linked_player}</strong>.
                 Your test mode scorecard and exports are limited to this player only.
@@ -1371,7 +1371,7 @@ export default function App() {
               >
                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Results"}
               </button>
-              {!player?.linked_player && (
+              {(!player?.linked_player || player.linked_player === player.name) && (
                 <button
                   className="tab"
                   style={{ fontSize: 13, padding: "10px 20px" }}

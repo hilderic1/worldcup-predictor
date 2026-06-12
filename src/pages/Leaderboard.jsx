@@ -392,7 +392,7 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
   // Filter for linked admins: only show their own player
-  const isLinkedAdmin = player?.is_admin && player?.linked_player;
+  const isLinkedAdmin = player?.is_admin && player?.linked_player && player.linked_player !== player.name;
   const filteredLeaderboard = isLinkedAdmin
     ? leaderboard.filter(entry => entry.name === player.linked_player)
     : leaderboard;
