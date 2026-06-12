@@ -40,6 +40,7 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [leaderboardHistory, setLeaderboardHistory] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [playerStats, setPlayerStats] = useState({});
 
   // Picks reveal — true once global deadline passes AND all players have fully submitted
   const [allPicksRevealed, setAllPicksRevealed] = useState(() => isPast(GLOBAL_DEADLINE));
@@ -254,6 +255,33 @@ export default function App() {
       });
       playerPredictions[name] = preds;
     });
+
+    // ── PER-MATCH STATS ──
+    const matchStats = {};
+    PLAYERS.forEach(name => {
+      matchStats[name] = { perfectGames: 0, correctResults: 0, totalRawDiff: 0, totalPlayed: 0 };
+    });
+    GROUP_MATCHES.forEach(m => {
+      const actual = freshActualMatches[m.id];
+      if (!actual || actual.home_score == null || actual.away_score == null) return;
+      PLAYERS.forEach(name => {
+        const pred = playerPredictions[name].matches[m.id];
+        if (!pred || pred.home_score == null) return;
+        const ph = +pred.home_score, pa = +pred.away_score;
+        if (ph === 10 && pa === 10) return; // sentinel
+        const scored = scoreMatch(pred, actual);
+        const s = matchStats[name];
+        s.totalPlayed++;
+        s.totalRawDiff += Math.abs(ph - +actual.home_score) + Math.abs(pa - +actual.away_score);
+        if (scored.total === 40) s.perfectGames++;
+        if (scored.result > 0)  s.correctResults++;
+      });
+    });
+    PLAYERS.forEach(name => {
+      const s = matchStats[name];
+      s.avgGoalDiff = s.totalPlayed > 0 ? +(s.totalRawDiff / s.totalPlayed).toFixed(2) : null;
+    });
+    setPlayerStats(matchStats);
 
     const events = [];
 
@@ -818,6 +846,7 @@ export default function App() {
             loading={leaderboardLoading}
             onRefresh={loadLeaderboard}
             player={player}
+            playerStats={playerStats}
           />
         )}
 
