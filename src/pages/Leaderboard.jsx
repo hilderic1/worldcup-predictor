@@ -391,17 +391,8 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
   const [activeTab, setActiveTab] = useState("standings");
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
-  // Filter for linked admins: only show their own player
-  const isLinkedAdmin = player?.is_admin && player?.linked_player && player.linked_player !== player.name;
-  const filteredLeaderboard = isLinkedAdmin
-    ? leaderboard.filter(entry => entry.name === player.linked_player)
-    : leaderboard;
-  const filteredHistory = isLinkedAdmin
-    ? history.map(h => ({
-        ...h,
-        scores: { [player.linked_player]: h.scores[player.linked_player] || 0 }
-      }))
-    : history;
+  const filteredLeaderboard = leaderboard;
+  const filteredHistory = history;
 
   return (
     <>
@@ -409,12 +400,6 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
         <div className="section-title">🏆 Leaderboard</div>
         <button className="btn-sm" onClick={onRefresh}>↻ Refresh</button>
       </div>
-
-      {isLinkedAdmin && (
-        <div className="notice info">
-          🔒 <strong>Restricted view:</strong> showing only <strong>{player?.linked_player}</strong>'s standings. ({filteredLeaderboard.length} entry shown)
-        </div>
-      )}
 
       {!globalLocked && (
         <div className="notice info">
@@ -461,7 +446,7 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
           ))}
         </div>
       ) : (
-        <ScoreHistoryChart history={filteredHistory} restrictedToPlayer={isLinkedAdmin ? player.linked_player : null} />
+        <ScoreHistoryChart history={filteredHistory} restrictedToPlayer={null} />
       )}
     </>
   );

@@ -50,39 +50,6 @@ export default function App() {
       .then(({ data }) => { if (data?.value === "true") setTestPhase(true); });
   }, []);
 
-  // Linked player score preview (admin in test mode)
-  const [linkedPlayerScore, setLinkedPlayerScore] = useState(null);
-  useEffect(() => {
-    if (!testPhase || !player?.linked_player) { setLinkedPlayerScore(null); return; }
-    // Load predictions for the linked player, compute score vs current actuals
-    (async () => {
-      const [pm, pg, pk, pkm] = await Promise.all([
-        supabase.from("match_predictions").select("*").eq("player_name", player.linked_player),
-        supabase.from("group_ranking_predictions").select("*").eq("player_name", player.linked_player),
-        supabase.from("knockout_predictions").select("*").eq("player_name", player.linked_player),
-        supabase.from("ko_match_predictions").select("*").eq("player_name", player.linked_player),
-      ]);
-      const preds = {
-        matches: Object.fromEntries((pm.data || []).map(r => [r.match_id, r])),
-        groupTopThree: Object.fromEntries((pg.data || []).map(r => [r.group_id, { first: r.ranking?.[0] || "", second: r.ranking?.[1] || "", third: r.ranking?.[2] || "" }])),
-        r32:    (pk.data || []).find(r => r.round === "R32")?.teams || [],
-        r16:    (pk.data || []).find(r => r.round === "R16")?.teams || [],
-        qf:     (pk.data || []).find(r => r.round === "QF")?.teams || [],
-        sfRanking: (pk.data || []).find(r => r.round === "SF_RANK")?.teams || [],
-        koMatches: Object.fromEntries((pkm.data || []).map(r => [r.round, (pkm.data.filter(x => x.round === r.round) || []).map(x => x)])),
-      };
-      const score = calcTotalScore(preds, {
-        matches: actualMatches,
-        groupTopThree: actualGroupTopThree,
-        r32: actualR32,
-        r16: actualR16,
-        qf: actualQF,
-        sfRanking: actualSFRank,
-        koMatches: {}
-      });
-      setLinkedPlayerScore(score);
-    })();
-  }, [testPhase, player?.linked_player, actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank]);
 
   // Messages (for logged-in non-admin player)
   const [messages, setMessages] = useState([]);
@@ -833,11 +800,6 @@ export default function App() {
           <>
             <div className="section-title" style={{ marginBottom: 18 }}>🔧 Admin Panel</div>
 
-            {testPhase && player?.linked_player && player.linked_player !== player.name && (
-              <div className="notice info" style={{ marginBottom: 16 }}>
-                🔒 <strong>Restricted access:</strong> Test mode scorecard is limited to <strong>{player.linked_player}</strong>'s data only.
-              </div>
-            )}
 
             {/* Test mode toggle */}
             <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "14px 18px", border: testPhase ? "1px solid #f0c030" : "1px solid #2a3a5a" }}>
@@ -860,29 +822,6 @@ export default function App() {
               )}
             </div>
 
-            {testPhase && player?.linked_player && linkedPlayerScore && (
-              <div className="card" style={{ marginBottom: 16, background: "rgba(240,192,48,0.08)", border: "1px solid #4a3a10" }}>
-                <div className="card-label">🧪 Test Score Preview — {player.linked_player}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginTop: 12 }}>
-                  <div style={{ textAlign: "center", padding: "10px 12px", background: "var(--bg-main)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-dark)", marginBottom: 4 }}>Total</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: "#f0c030" }}>{linkedPlayerScore.total}</div>
-                  </div>
-                  <div style={{ textAlign: "center", padding: "10px 12px", background: "var(--bg-main)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-dark)", marginBottom: 4 }}>Match Pts</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#c8d8f0" }}>{linkedPlayerScore.matchPts}</div>
-                  </div>
-                  <div style={{ textAlign: "center", padding: "10px 12px", background: "var(--bg-main)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-dark)", marginBottom: 4 }}>Group Pts</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#8ab8e8" }}>{linkedPlayerScore.groupPts}</div>
-                  </div>
-                  <div style={{ textAlign: "center", padding: "10px 12px", background: "var(--bg-main)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-dark)", marginBottom: 4 }}>KO Pts</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#4caf80" }}>{linkedPlayerScore.r32Pts + linkedPlayerScore.r16Pts + linkedPlayerScore.qfPts + linkedPlayerScore.sfPts}</div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="card">
               <div className="card-label">Tournament Deadlines</div>
@@ -1370,33 +1309,18 @@ export default function App() {
               >
                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Results"}
               </button>
-              {player?.linked_player && player.linked_player !== player.name ? (
-                <button
-                  className="tab"
-                  style={{ fontSize: 13, padding: "10px 20px" }}
-                  disabled={exporting}
-                  onClick={async () => {
-                    setExporting(true);
-                    try { await exportMyPicks(player.linked_player); }
-                    finally { setExporting(false); }
-                  }}
-                >
-                  {exporting ? "Generating…" : `📥 Export ${player.linked_player}'s Picks (.xlsx)`}
-                </button>
-              ) : (
-                <button
-                  className="tab"
-                  style={{ fontSize: 13, padding: "10px 20px" }}
-                  disabled={exporting}
-                  onClick={async () => {
-                    setExporting(true);
-                    try { await exportAllPicks(); }
-                    finally { setExporting(false); }
-                  }}
-                >
-                  {exporting ? "Generating…" : "📥 Backup All Picks (.xlsx)"}
-                </button>
-              )}
+              <button
+                className="tab"
+                style={{ fontSize: 13, padding: "10px 20px" }}
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try { await exportAllPicks(); }
+                  finally { setExporting(false); }
+                }}
+              >
+                {exporting ? "Generating…" : "📥 Backup All Picks (.xlsx)"}
+              </button>
             </div>
           </>
         )}

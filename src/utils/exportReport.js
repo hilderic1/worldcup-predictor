@@ -196,6 +196,95 @@ export async function exportMyPicks(playerName) {
   XLSX.writeFile(wb, `WC2026_Picks_${playerName}.xlsx`);
 }
 
+/** All players: one sheet comparing all players side by side */
+export async function exportComparison() {
+  const XLSX = await getXLSX();
+  const { byPlayer, fixtures } = await fetchAllPlayerPreds();
+  const startedRounds = KO_ROUNDS.filter(r => r.firstKickoff && new Date() >= new Date(r.firstKickoff));
+  const rows = [];
+  const ph = ["", ...PLAYERS]; // player header row
+
+  // ── Group match scores ──
+  rows.push(["GROUP STAGE — MATCH SCORE PREDICTIONS"]);
+  rows.push(["Match", "Home Team", "Away Team", "Date", ...PLAYERS]);
+  Object.keys(GROUPS).forEach(grp => {
+    GROUP_MATCHES.filter(m => m.group === grp).forEach(m => {
+      rows.push([
+        m.id, m.home, m.away, m.date,
+        ...PLAYERS.map(name => {
+          const p = byPlayer[name].matches[m.id] || {};
+          const hs = p.home_score, as = p.away_score;
+          return (hs == null || (+hs === 10 && +as === 10)) ? "" : `${hs}-${as}`;
+        }),
+      ]);
+    });
+  });
+
+  // ── Group rankings ──
+  rows.push([]);
+  rows.push(["GROUP STAGE — TOP 3 RANKINGS"]);
+  rows.push(["Group", "Position", ...PLAYERS]);
+  Object.keys(GROUPS).forEach(grp => {
+    ["1st", "2nd", "3rd"].forEach((pos, i) => {
+      const key = ["first", "second", "third"][i];
+      rows.push([
+        `Group ${grp}`, pos,
+        ...PLAYERS.map(name => byPlayer[name].groupTopThree[grp]?.[key] || ""),
+      ]);
+    });
+  });
+
+  // ── KO qualifiers ──
+  rows.push([]);
+  rows.push(["KNOCKOUT QUALIFIER PICKS"]);
+  [
+    { label: "Round of 32 (32 teams)", key: "r32" },
+    { label: "Round of 16 (16 teams)", key: "r16" },
+    { label: "Quarter-Finals (8 teams)", key: "qf" },
+  ].forEach(({ label, key }) => {
+    rows.push([label, ...ph.slice(1)]);
+    const maxLen = Math.max(...PLAYERS.map(n => (byPlayer[n][key] || []).filter(Boolean).length));
+    for (let i = 0; i < maxLen; i++) {
+      rows.push([
+        `#${i + 1}`,
+        ...PLAYERS.map(name => (byPlayer[name][key] || []).filter(Boolean).sort()[i] || ""),
+      ]);
+    }
+    rows.push([]);
+  });
+
+  // Final standings
+  rows.push(["FINAL STANDINGS (1st–4th)"]);
+  rows.push(["Position", ...PLAYERS]);
+  FINAL_RANKS.forEach((pos, i) => {
+    rows.push([pos, ...PLAYERS.map(name => (byPlayer[name].sfRank || [])[i] || "")]);
+  });
+
+  // ── KO match score predictions (started rounds only) ──
+  if (startedRounds.length > 0) {
+    rows.push([]);
+    rows.push(["KNOCKOUT MATCH SCORE PREDICTIONS (started rounds)"]);
+    rows.push(["Round", "Match", "Home", "Away", ...PLAYERS]);
+    startedRounds.forEach(r => {
+      (fixtures[r.id] || []).forEach((fix, i) => {
+        if (!fix?.home) return;
+        rows.push([
+          r.label, i + 1, fix.home, fix.away,
+          ...PLAYERS.map(name => {
+            const p = (byPlayer[name].koMatches[r.id] || [])[i] || {};
+            return p.home_score != null ? `${p.home_score}-${p.away_score}` : "";
+          }),
+        ]);
+      });
+    });
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "All Picks Comparison");
+  const date = new Date().toISOString().split("T")[0];
+  XLSX.writeFile(wb, `WC2026_Comparison_${date}.xlsx`);
+}
+
 /** Admin: download one sheet per player */
 export async function exportAllPicks() {
   const XLSX = await getXLSX();
