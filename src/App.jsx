@@ -211,6 +211,22 @@ export default function App() {
       supabase.from("actual_knockout").select("*"),
       supabase.from("ko_actual_scores").select("*"),
     ]);
+    // Build actuals from the freshly-fetched DB data (avoids stale React state)
+    const freshActualMatches = {};
+    (rm.data || []).forEach(r => (freshActualMatches[r.match_id] = r));
+    const freshActualGroupTopThree = {};
+    (rg.data || []).forEach(r => {
+      if (Array.isArray(r.ranking))
+        freshActualGroupTopThree[r.group_id] = { first: r.ranking[0] || "", second: r.ranking[1] || "", third: r.ranking[2] || "" };
+    });
+    const freshAk = {};
+    (rk.data || []).forEach(r => (freshAk[r.round] = r.teams));
+    const freshKoActualScores = {};
+    (rs.data || []).forEach(r => {
+      if (!freshKoActualScores[r.round]) freshKoActualScores[r.round] = [];
+      freshKoActualScores[r.round][r.game_index] = { home_score: r.home_score, away_score: r.away_score };
+    });
+
     const scores = PLAYERS.map(name => {
       const preds = { matches: {}, groupTopThree: {}, r32: null, r16: null, qf: null, sfRanking: null, koMatches: {} };
       (pm.data || []).filter(r => r.player_name === name).forEach(r => (preds.matches[r.match_id] = r));
@@ -229,9 +245,13 @@ export default function App() {
         preds.koMatches[r.round][r.game_index] = { home_score: r.home_score, away_score: r.away_score };
       });
       const actuals = {
-        matches: actualMatches, groupTopThree: actualGroupTopThree,
-        r32: actualR32, r16: actualR16, qf: actualQF, sfRanking: actualSFRank,
-        koMatches: koActualScores,
+        matches: freshActualMatches,
+        groupTopThree: freshActualGroupTopThree,
+        r32: freshAk["R32"] || Array(32).fill(""),
+        r16: freshAk["R16"] || Array(16).fill(""),
+        qf:  freshAk["QF"]  || Array(8).fill(""),
+        sfRanking: freshAk["SF_RANK"] || Array(4).fill(""),
+        koMatches: freshKoActualScores,
       };
       return { name, ...calcTotalScore(preds, actuals) };
     });
@@ -424,7 +444,7 @@ export default function App() {
 
     setLeaderboardHistory(history);
     setLeaderboardLoading(false);
-  }, [actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank, koActualScores]);
+  }, []);
 
   // ── MESSAGES ──
   const loadMessages = useCallback(async (playerName) => {
@@ -505,6 +525,7 @@ export default function App() {
     setPlayer(data);
     if (data.is_admin) {
       setView("admin");
+      loadLeaderboard();
     } else {
       setView("dashboard");
       loadLeaderboard();
