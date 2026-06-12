@@ -950,8 +950,7 @@ export default function App() {
                   {(() => {
                     const groups = Object.keys(GROUPS);
                     const nSel   = adminSelectedThirds.size;
-                    const canGen = nSel === 8 &&
-                      groups.every(g => actualGroupTopThree[g]?.first && actualGroupTopThree[g]?.second);
+                    const canGen = Object.values(actualGroupTopThree).some(v => v?.first || v?.second);
 
                     function toggleThird(grp) {
                       setAdminSelectedThirds(prev => {
@@ -1009,16 +1008,16 @@ export default function App() {
                             disabled={!canGen}
                             onClick={generateR32Fixtures}
                           >
-                            ⚡ Generate R32 Bracket ({nSel}/8 selected)
+                            ⚡ Generate R32 Bracket
                           </button>
-                          {nSel === 8 && !canGen && (
-                            <span style={{ fontSize: 11, color: "#f0c030" }}>
-                              ⚠ Enter all group 1st/2nd in Group Top 3 tab first
+                          {!canGen && (
+                            <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                              Enter at least one group result in Group Top 3 tab first
                             </span>
                           )}
-                          {nSel > 0 && nSel < 8 && (
-                            <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
-                              Select {8 - nSel} more
+                          {canGen && nSel < 8 && (
+                            <span style={{ fontSize: 11, color: "#f0c030" }}>
+                              {nSel}/8 3rd-place teams selected — 3rd-place slots will be blank until all 8 are chosen
                             </span>
                           )}
                         </div>
