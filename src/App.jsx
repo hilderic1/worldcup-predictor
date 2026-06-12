@@ -672,6 +672,21 @@ export default function App() {
 
     const r32 = R32_MATCHES.map(m => ({ home: resolve(m.home), away: resolve(m.away) }));
     setKoFixtures(prev => ({ ...prev, R32: r32 }));
+
+    // Derive the 32 qualifying teams directly from the bracket (preserves FIFA slot order)
+    setActualR32(r32.flatMap(g => [g.home, g.away]).filter(Boolean));
+
+    // Also populate the 32 qualifying teams (winners + runners-up + selected 3rds)
+    const r32Teams = [];
+    Object.entries(actualGroupTopThree).forEach(([, v]) => {
+      if (v.first)  r32Teams.push(v.first);
+      if (v.second) r32Teams.push(v.second);
+    });
+    adminSelectedThirds.forEach(grp => {
+      const v = actualGroupTopThree[grp];
+      if (v?.third) r32Teams.push(v.third);
+    });
+    setActualR32(r32Teams);
   }
 
   // ── RENDER ──
