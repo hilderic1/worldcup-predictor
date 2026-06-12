@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
-import { GLOBAL_DEADLINE, KO_ROUNDS, GROUPS, GROUP_MATCHES, f } from "../constants";
+import { GLOBAL_DEADLINE, KO_ROUNDS, GROUPS, GROUP_MATCHES, R32_MATCHES, f } from "../constants";
 import { isPast, currentOpenRound } from "../utils";
 import FIFA_TABLE from "../data/fifaTable";
 import { FIFA_RANKINGS, OPTA_WIN_PCT } from "../data/teamStrengths";
@@ -145,27 +145,6 @@ const R32_3RD_SLOTS = [
   { match: "M77", winner: "I", constraint: "C/D/F/G/H" },
   { match: "M87", winner: "K", constraint: "D/E/I/J/L" },
   { match: "M80", winner: "L", constraint: "E/H/I/J/K" },
-];
-
-// All 16 R32 matches in display order, left column then right column
-// type: "WvW"=winner vs winner, "WvR"=winner vs runner-up, "RvR"=runner-up vs runner-up, "Wv3"=winner vs 3rd
-const R32_MATCHES = [
-  { match:"M73", home:{type:"R",grp:"A"}, away:{type:"R",grp:"B"} },
-  { match:"M74", home:{type:"W",grp:"E"}, away:{type:"3",col:3}   },
-  { match:"M75", home:{type:"W",grp:"F"}, away:{type:"R",grp:"C"} },
-  { match:"M76", home:{type:"W",grp:"C"}, away:{type:"R",grp:"F"} },
-  { match:"M77", home:{type:"W",grp:"I"}, away:{type:"3",col:5}   },
-  { match:"M78", home:{type:"R",grp:"E"}, away:{type:"R",grp:"I"} },
-  { match:"M79", home:{type:"W",grp:"A"}, away:{type:"3",col:0}   },
-  { match:"M80", home:{type:"W",grp:"L"}, away:{type:"3",col:7}   },
-  { match:"M81", home:{type:"W",grp:"D"}, away:{type:"3",col:2}   },
-  { match:"M82", home:{type:"W",grp:"G"}, away:{type:"3",col:4}   },
-  { match:"M83", home:{type:"R",grp:"K"}, away:{type:"R",grp:"L"} },
-  { match:"M84", home:{type:"W",grp:"H"}, away:{type:"R",grp:"J"} },
-  { match:"M85", home:{type:"W",grp:"B"}, away:{type:"3",col:1}   },
-  { match:"M86", home:{type:"W",grp:"J"}, away:{type:"R",grp:"H"} },
-  { match:"M87", home:{type:"W",grp:"K"}, away:{type:"3",col:6}   },
-  { match:"M88", home:{type:"R",grp:"D"}, away:{type:"R",grp:"G"} },
 ];
 
 /**

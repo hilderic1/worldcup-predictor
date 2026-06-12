@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
 import {
   PLAYERS, GROUPS, KO_ROUNDS, SORTED_TEAMS, FINAL_RANKS, ALL_TEAMS, f,
-  GLOBAL_DEADLINE, GROUP_MATCHES,
+  GLOBAL_DEADLINE, GROUP_MATCHES, R32_MATCHES,
 } from "./constants";
+import FIFA_TABLE from "./data/fifaTable";
 import {
   calcTotalScore, isPast, currentOpenRound, formatDeadline,
   scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking
@@ -82,6 +83,7 @@ export default function App() {
   // Admin UI state
   const [adminTab, setAdminTab] = useState("fixtures");
   const [saveState, setSaveState] = useState("idle");
+  const [adminSelectedThirds, setAdminSelectedThirds] = useState(new Set());
 
   const openRound = currentOpenRound();
 
@@ -644,6 +646,34 @@ export default function App() {
     }
   }
 
+  // ── R32 AUTO-GENERATE ──
+  function generateR32Fixtures() {
+    const pos = {};
+    Object.entries(actualGroupTopThree).forEach(([grp, v]) => {
+      pos[grp] = { W: v.first || "", R: v.second || "" };
+    });
+    const thirdByGrp = {};
+    Object.entries(actualGroupTopThree).forEach(([grp, v]) => {
+      if (adminSelectedThirds.has(grp) && v.third) thirdByGrp[grp] = v.third;
+    });
+    const qualGrps  = [...adminSelectedThirds].sort().join("");
+    const colAssign = FIFA_TABLE[qualGrps] || null;
+
+    function resolve(slot) {
+      if (slot.type === "W") return pos[slot.grp]?.W || "";
+      if (slot.type === "R") return pos[slot.grp]?.R || "";
+      if (slot.type === "3") {
+        if (!colAssign) return "";
+        const srcGrp = colAssign[slot.col];
+        return thirdByGrp[srcGrp] || "";
+      }
+      return "";
+    }
+
+    const r32 = R32_MATCHES.map(m => ({ home: resolve(m.home), away: resolve(m.away) }));
+    setKoFixtures(prev => ({ ...prev, R32: r32 }));
+  }
+
   // ── RENDER ──
   return (
     <div>
@@ -893,63 +923,154 @@ export default function App() {
 
             {/* KO FIXTURES */}
             {adminTab === "fixtures" && (
-              <div className="card">
-                <div className="card-label">Enter knockout fixtures — players can then predict scores for each open round</div>
-                {KO_ROUNDS.map(r => (
-                  <div key={r.id} style={{ marginBottom: 20 }}>
-                    <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#f0c030", marginBottom: 8, fontWeight: 700 }}>
-                      {r.label}
-                    </div>
-                    {Array(r.games).fill(0).map((_, i) => {
-                      const fix = (koFixtures[r.id] || [])[i] || {};
-                      const availableTeams =
-                        r.id === "R32" ? ALL_TEAMS :
-                        r.id === "R16" ? (actualR32.filter(Boolean).length ? actualR32.filter(Boolean) : ALL_TEAMS) :
-                        r.id === "QF"  ? (actualR16.filter(Boolean).length ? actualR16.filter(Boolean) : ALL_TEAMS) :
-                        r.id === "SF"  ? (actualQF.filter(Boolean).length  ? actualQF.filter(Boolean)  : ALL_TEAMS) :
-                        (actualSFRank.filter(Boolean).length ? actualSFRank.filter(Boolean) : ALL_TEAMS);
-                      return (
-                        <div key={i} className="fixture-row">
-                          <div className="fixture-num">{i + 1}</div>
-                          <select
-                            className="fixture-sel"
-                            value={fix.home || ""}
-                            onChange={e => {
-                              const u = { ...koFixtures };
-                              if (!u[r.id]) u[r.id] = [];
-                              if (!u[r.id][i]) u[r.id][i] = {};
-                              u[r.id][i] = { ...u[r.id][i], home: e.target.value };
-                              setKoFixtures(u);
-                            }}
-                          >
-                            <option value="">— home —</option>
-                            {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
-                              <option key={t} value={t}>{f(t)} {t}</option>
-                            ))}
-                          </select>
-                          <div className="sep" style={{ textAlign: "center" }}>vs</div>
-                          <select
-                            className="fixture-sel"
-                            value={fix.away || ""}
-                            onChange={e => {
-                              const u = { ...koFixtures };
-                              if (!u[r.id]) u[r.id] = [];
-                              if (!u[r.id][i]) u[r.id][i] = {};
-                              u[r.id][i] = { ...u[r.id][i], away: e.target.value };
-                              setKoFixtures(u);
-                            }}
-                          >
-                            <option value="">— away —</option>
-                            {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
-                              <option key={t} value={t}>{f(t)} {t}</option>
-                            ))}
-                          </select>
+              <>
+                {/* ── Auto-generate R32 ── */}
+                <div className="card" style={{ marginBottom: 12 }}>
+                  <div className="card-label">Auto-generate R32 bracket from actual group standings</div>
+                  <p style={{ fontSize: 12, color: "var(--text-dark)", margin: "6px 0 12px" }}>
+                    Select the 8 qualifying 3rd-place teams, then click Generate.
+                    The R32 fixtures below will be filled in automatically using the FIFA bracket assignment table.
+                    You must have entered 1st/2nd/3rd in the Group Top 3 tab first.
+                  </p>
+                  {(() => {
+                    const groups = Object.keys(GROUPS);
+                    const nSel   = adminSelectedThirds.size;
+                    const canGen = nSel === 8 &&
+                      groups.every(g => actualGroupTopThree[g]?.first && actualGroupTopThree[g]?.second);
+
+                    function toggleThird(grp) {
+                      setAdminSelectedThirds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(grp)) { next.delete(grp); }
+                        else if (next.size < 8) { next.add(grp); }
+                        return next;
+                      });
+                    }
+
+                    return (
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6, marginBottom: 14 }}>
+                          {groups.map(grp => {
+                            const v        = actualGroupTopThree[grp] || {};
+                            const third    = v.third || "";
+                            const selected = adminSelectedThirds.has(grp);
+                            const missing  = !v.first || !v.second;
+                            return (
+                              <div
+                                key={grp}
+                                onClick={() => !missing && toggleThird(grp)}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 8,
+                                  padding: "7px 10px", borderRadius: 6, cursor: missing ? "default" : "pointer",
+                                  border: "1px solid",
+                                  borderColor: selected ? "#4caf80" : "#2a3a5a",
+                                  background:  selected ? "rgba(76,175,128,0.10)" : "#070f1c",
+                                  opacity: missing ? 0.4 : 1,
+                                }}
+                              >
+                                <div style={{
+                                  width: 16, height: 16, borderRadius: 3, flexShrink: 0,
+                                  border: "1px solid", borderColor: selected ? "#4caf80" : "#2a3a5a",
+                                  background: selected ? "#4caf80" : "transparent",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontSize: 11, color: "#0a1628", fontWeight: 700,
+                                }}>
+                                  {selected ? "✓" : ""}
+                                </div>
+                                <div>
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: selected ? "#4caf80" : "var(--text-dark)", letterSpacing: 1 }}>GRP {grp}</span>
+                                  <span style={{ fontSize: 12, color: selected ? "var(--text-main)" : "var(--text-dark)", marginLeft: 6 }}>
+                                    {third ? `${f(third)} ${third}` : <em>3rd not entered</em>}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
+                        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                          <button
+                            className="btn-save"
+                            style={{ width: "auto", opacity: canGen ? 1 : 0.4 }}
+                            disabled={!canGen}
+                            onClick={generateR32Fixtures}
+                          >
+                            ⚡ Generate R32 Bracket ({nSel}/8 selected)
+                          </button>
+                          {nSel === 8 && !canGen && (
+                            <span style={{ fontSize: 11, color: "#f0c030" }}>
+                              ⚠ Enter all group 1st/2nd in Group Top 3 tab first
+                            </span>
+                          )}
+                          {nSel > 0 && nSel < 8 && (
+                            <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                              Select {8 - nSel} more
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* ── Manual fixture entry (all rounds) ── */}
+                <div className="card">
+                  <div className="card-label">Review / override fixtures — also used for R16, QF, SF, Final</div>
+                  {KO_ROUNDS.map(r => (
+                    <div key={r.id} style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#f0c030", marginBottom: 8, fontWeight: 700 }}>
+                        {r.label}
+                      </div>
+                      {Array(r.games).fill(0).map((_, i) => {
+                        const fix = (koFixtures[r.id] || [])[i] || {};
+                        const availableTeams =
+                          r.id === "R32" ? ALL_TEAMS :
+                          r.id === "R16" ? (actualR32.filter(Boolean).length ? actualR32.filter(Boolean) : ALL_TEAMS) :
+                          r.id === "QF"  ? (actualR16.filter(Boolean).length ? actualR16.filter(Boolean) : ALL_TEAMS) :
+                          r.id === "SF"  ? (actualQF.filter(Boolean).length  ? actualQF.filter(Boolean)  : ALL_TEAMS) :
+                          (actualSFRank.filter(Boolean).length ? actualSFRank.filter(Boolean) : ALL_TEAMS);
+                        return (
+                          <div key={i} className="fixture-row">
+                            <div className="fixture-num">{i + 1}</div>
+                            <select
+                              className="fixture-sel"
+                              value={fix.home || ""}
+                              onChange={e => {
+                                const u = { ...koFixtures };
+                                if (!u[r.id]) u[r.id] = [];
+                                if (!u[r.id][i]) u[r.id][i] = {};
+                                u[r.id][i] = { ...u[r.id][i], home: e.target.value };
+                                setKoFixtures(u);
+                              }}
+                            >
+                              <option value="">— home —</option>
+                              {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
+                                <option key={t} value={t}>{f(t)} {t}</option>
+                              ))}
+                            </select>
+                            <div className="sep" style={{ textAlign: "center" }}>vs</div>
+                            <select
+                              className="fixture-sel"
+                              value={fix.away || ""}
+                              onChange={e => {
+                                const u = { ...koFixtures };
+                                if (!u[r.id]) u[r.id] = [];
+                                if (!u[r.id][i]) u[r.id][i] = {};
+                                u[r.id][i] = { ...u[r.id][i], away: e.target.value };
+                                setKoFixtures(u);
+                              }}
+                            >
+                              <option value="">— away —</option>
+                              {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
+                                <option key={t} value={t}>{f(t)} {t}</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
 
             {/* GROUP RESULTS */}
