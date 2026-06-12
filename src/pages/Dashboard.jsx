@@ -285,7 +285,17 @@ function simulateFullBracket(r32Matches, source, strengths) {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export default function Dashboard({ player, lastLogin, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead, teamStrengths }) {
+// Parse a GROUP_MATCHES date "M/D/YY" + time "HH:MM" to a UTC ms timestamp
+function matchKickoffMs(m) {
+  const [mo, dy] = m.date.split("/");
+  const [hh, mm] = m.time.split(":");
+  return new Date(`2026-${mo.padStart(2,"0")}-${dy.padStart(2,"0")}T${hh.padStart(2,"0")}:${mm}:00Z`).getTime();
+}
+
+// All group matches sorted chronologically (computed once)
+const SORTED_GROUP_MATCHES = [...GROUP_MATCHES].sort((a, b) => matchKickoffMs(a) - matchKickoffMs(b));
+
+export default function Dashboard({ player, lastLogin, leaderboard, leaderboardLoading, onNavigate, messages, onMarkRead, teamStrengths, actualMatches = {} }) {
   const openRound  = currentOpenRound();
   const globalLocked = isPast(GLOBAL_DEADLINE);
 
@@ -399,6 +409,21 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
     }
   }
 
+  // Which results tile is open: null | 'results' | 'standings'
+  const [resultsTile, setResultsTile] = useState(null);
+  function toggleResultsTile(key) { setResultsTile(prev => prev === key ? null : key); }
+
+  // Actual group standings derived from admin-entered results
+  const actualStandings = useMemo(() => {
+    const standings = {};
+    Object.entries(GROUPS).forEach(([grp, teams]) => {
+      const grpMatches = GROUP_MATCHES.filter(m => m.group === grp);
+      const stats = buildStats(teams, grpMatches, actualMatches);
+      standings[grp] = sortStandings(stats, grpMatches, actualMatches);
+    });
+    return standings;
+  }, [actualMatches]);
+
   // Which simulation tile is open: null | 'groups' | 'r32' | 'bracket'
   const [simTile, setSimTile] = useState(null);
   function toggleTile(key) { setSimTile(prev => prev === key ? null : key); }
@@ -506,6 +531,182 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
         </button>
       </div>
 
+      {/* Results */}
+      <div className="section-header" style={{ marginTop: 32 }}>
+        <div className="section-title">📋 Results</div>
+      </div>
+      <div className="dashboard-actions">
+
+        {/* ── Match Results tile ── */}
+        <button
+          className={`dashboard-action-card ${resultsTile === "results" ? "active" : ""}`}
+          onClick={() => toggleResultsTile("results")}
+          style={resultsTile === "results" ? { borderColor: "#4caf80", background: "rgba(76,175,128,0.07)" } : {}}
+        >
+          <div className="dashboard-action-icon">⚽</div>
+          <div className="dashboard-action-label">Match Results</div>
+          <div className="dashboard-action-desc">All group games in order of play</div>
+          <div style={{ fontSize: 10, color: "#4caf80", marginTop: 6 }}>
+            {resultsTile === "results" ? "▲ collapse" : "▼ expand"}
+          </div>
+        </button>
+
+        {/* ── Actual Standings tile ── */}
+        <button
+          className={`dashboard-action-card ${resultsTile === "standings" ? "active" : ""}`}
+          onClick={() => toggleResultsTile("standings")}
+          style={resultsTile === "standings" ? { borderColor: "#4caf80", background: "rgba(76,175,128,0.07)" } : {}}
+        >
+          <div className="dashboard-action-icon">📊</div>
+          <div className="dashboard-action-label">Actual Standings</div>
+          <div className="dashboard-action-desc">Group standings from actual results</div>
+          <div style={{ fontSize: 10, color: "#4caf80", marginTop: 6 }}>
+            {resultsTile === "standings" ? "▲ collapse" : "▼ expand"}
+          </div>
+        </button>
+
+      </div>
+
+      {/* ── Match Results panel ── */}
+      {resultsTile === "results" && (() => {
+        // Group sorted matches by date label
+        const byDate = [];
+        let curDate = null;
+        SORTED_GROUP_MATCHES.forEach(m => {
+          const [mo, dy] = m.date.split("/");
+          const label = new Date(`2026-${mo.padStart(2,"0")}-${dy.padStart(2,"0")}T12:00:00Z`)
+            .toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+          if (label !== curDate) {
+            byDate.push({ label, matches: [] });
+            curDate = label;
+          }
+          byDate[byDate.length - 1].matches.push(m);
+        });
+        const played  = Object.keys(actualMatches).length;
+        const total   = GROUP_MATCHES.length;
+        return (
+          <div className="card" style={{ marginTop: 8 }}>
+            <div className="card-label">
+              Group stage matches in chronological order — {played} of {total} results entered
+            </div>
+            {byDate.map(({ label, matches }) => (
+              <div key={label} style={{ marginBottom: 12 }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase",
+                  color: "#4caf80", marginBottom: 6, marginTop: 10,
+                }}>
+                  {label}
+                </div>
+                {matches.map(m => {
+                  const res     = actualMatches[m.id];
+                  const hasResult = res && res.home_score != null && res.away_score != null;
+                  return (
+                    <div key={m.id} style={{
+                      display: "grid",
+                      gridTemplateColumns: "28px 1fr auto 1fr",
+                      gap: 4,
+                      alignItems: "center",
+                      padding: "5px 0",
+                      borderBottom: "1px solid #0e1a2e",
+                    }}>
+                      <span style={{ fontSize: 10, color: "var(--text-dark)", fontWeight: 700 }}>{m.id}</span>
+                      <div style={{ textAlign: "right", fontSize: 12, fontWeight: hasResult ? 700 : 400, color: hasResult ? "var(--text-main)" : "var(--text-dark)", whiteSpace: "nowrap" }}>
+                        {f(m.home)} {m.home}
+                      </div>
+                      <div style={{ textAlign: "center", minWidth: 54, fontSize: 13, fontWeight: 700, color: hasResult ? "#f0c030" : "var(--text-dark)", padding: "0 6px" }}>
+                        {hasResult ? `${res.home_score} – ${res.away_score}` : "vs"}
+                      </div>
+                      <div style={{ textAlign: "left", fontSize: 12, fontWeight: hasResult ? 700 : 400, color: hasResult ? "var(--text-main)" : "var(--text-dark)", whiteSpace: "nowrap" }}>
+                        {m.away} {f(m.away)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            <div style={{ marginTop: 10, fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <span style={{ color: "#f0c030" }}>■ Result entered</span>
+              <span style={{ color: "var(--text-dark)" }}>■ Upcoming / not yet entered</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Actual Standings panel ── */}
+      {resultsTile === "standings" && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <div className="card-label">
+            Actual Group Standings — based on results entered by Admin
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
+            gap: 14,
+            marginTop: 14,
+          }}>
+            {Object.entries(GROUPS).map(([grp]) => {
+              const { sorted = [], tiedTeams = new Set() } = actualStandings[grp] || {};
+              const grpMatches = GROUP_MATCHES.filter(m => m.group === grp);
+              const played = grpMatches.filter(m => {
+                const r = actualMatches[m.id];
+                return r && r.home_score != null && r.away_score != null;
+              }).length;
+              return (
+                <div key={grp} style={{ background: "#0a1628", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#4caf80" }}>GROUP {grp}</span>
+                    <span style={{ fontSize: 10, color: played === grpMatches.length ? "#4caf80" : "var(--text-dark)", fontWeight: played === grpMatches.length ? 700 : 400 }}>
+                      {played}/{grpMatches.length} played
+                    </span>
+                  </div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ color: "var(--text-dark)", borderBottom: "1px solid #1a2a3a" }}>
+                        <td style={{ padding: "2px 3px", width: 16 }}>#</td>
+                        <td style={{ padding: "2px 3px" }}>Team</td>
+                        <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>P</td>
+                        <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>W</td>
+                        <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>D</td>
+                        <td style={{ padding: "2px 3px", textAlign: "center", width: 20 }}>L</td>
+                        <td style={{ padding: "2px 3px", textAlign: "center", width: 28 }}>GD</td>
+                        <td style={{ padding: "2px 3px", textAlign: "center", width: 28, fontWeight: 700 }}>Pts</td>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map((row, idx) => {
+                        const isTied    = tiedTeams.has(row.team);
+                        const qualifies = idx < 2;
+                        const rowColor  = isTied ? "#f0c030" : qualifies ? "#c8d8f0" : "var(--text-dark)";
+                        return (
+                          <tr key={row.team} style={{ borderBottom: "1px solid #0e1a2e" }}>
+                            <td style={{ padding: "3px 3px", color: rowColor, fontWeight: qualifies ? 700 : 400 }}>{idx + 1}</td>
+                            <td style={{ padding: "3px 3px", color: rowColor, fontWeight: qualifies ? 700 : 400, whiteSpace: "nowrap" }}>
+                              {f(row.team)} {row.team}
+                            </td>
+                            <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.played}</td>
+                            <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.won}</td>
+                            <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.drawn}</td>
+                            <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>{row.lost}</td>
+                            <td style={{ padding: "3px 3px", textAlign: "center", color: "var(--text-dark)" }}>
+                              {row.gd > 0 ? "+" : ""}{row.gd}
+                            </td>
+                            <td style={{ padding: "3px 3px", textAlign: "center", color: rowColor, fontWeight: 700 }}>{row.points}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 16, fontSize: 11, flexWrap: "wrap" }}>
+            <span style={{ color: "#c8d8f0" }}>■ Advances (top 2)</span>
+            <span style={{ color: "#f0c030" }}>■ Colour tie — only fair play (cards) can separate these teams</span>
+          </div>
+        </div>
+      )}
+
       {/* Simulations */}
       <div className="section-header" style={{ marginTop: 32 }}>
         <div className="section-title">🔬 Simulations</div>
@@ -546,12 +747,12 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
         <button
           className={`dashboard-action-card ${simTile === "bracket" ? "active" : ""}`}
           onClick={() => toggleTile("bracket")}
-          style={simTile === "bracket" ? { borderColor: "#4caf80", background: "rgba(76,175,128,0.07)" } : {}}
+          style={simTile === "bracket" ? { borderColor: "#f0c030", background: "rgba(240,192,48,0.07)" } : {}}
         >
           <div className="dashboard-action-icon">🏆</div>
           <div className="dashboard-action-label">Full Bracket</div>
           <div className="dashboard-action-desc">Simulate R16 → Final &amp; apply to picks</div>
-          <div style={{ fontSize: 10, color: "#4caf80", marginTop: 6 }}>
+          <div style={{ fontSize: 10, color: "#f0c030", marginTop: 6 }}>
             {simTile === "bracket" ? "▲ collapse" : "▼ expand"}
           </div>
         </button>
@@ -830,9 +1031,9 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
                 style={{
                   fontSize: 12, padding: "6px 14px", borderRadius: 20, cursor: "pointer",
                   border: "1px solid",
-                  borderColor:  simSource === opt.key ? "#4caf80" : "#2a3a5a",
-                  background:   simSource === opt.key ? "rgba(76,175,128,0.15)" : "transparent",
-                  color:        simSource === opt.key ? "#4caf80" : "var(--text-dark)",
+                  borderColor:  simSource === opt.key ? "#f0c030" : "#2a3a5a",
+                  background:   simSource === opt.key ? "rgba(240,192,48,0.10)" : "transparent",
+                  color:        simSource === opt.key ? "#f0c030" : "var(--text-dark)",
                   fontWeight:   simSource === opt.key ? 700 : 400,
                 }}
               >
@@ -942,9 +1143,9 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
               <div style={{ borderTop: "1px solid #1a2a3a", paddingTop: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <button
                   className="btn-save"
-                  style={{ background: "#1a5c38", borderColor: "#4caf80", width: "auto" }}
+                  style={{ background: "#1a5c38", borderColor: "#4caf80", width: "auto", opacity: globalLocked ? 0.4 : 1 }}
                   onClick={applySimToPicks}
-                  disabled={applyingPicks}
+                  disabled={applyingPicks || globalLocked}
                 >
                   {applyingPicks ? "Saving…" : "⚡ Apply simulation to my KO picks"}
                 </button>
@@ -953,9 +1154,15 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
                     ✓ Picks saved! Go to My Picks to review.
                   </span>
                 )}
-                <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
-                  Overwrites your current R32 → QF qualifier picks and final standings.
-                </span>
+                {globalLocked ? (
+                  <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                    🔒 Picks locked — global deadline has passed.
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                    Overwrites your current R32 → QF qualifier picks and final standings.
+                  </span>
+                )}
               </div>
             </>
           )}

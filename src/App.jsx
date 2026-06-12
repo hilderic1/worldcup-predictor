@@ -746,6 +746,7 @@ export default function App() {
             messages={messages}
             onMarkRead={markMessageRead}
             teamStrengths={teamStrengths}
+            actualMatches={actualMatches}
           />
         )}
 
