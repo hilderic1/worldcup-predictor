@@ -177,10 +177,12 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
 
         {KO_ROUNDS.map(r => {
           const isOpen = openRound === r.id;
+          const hasStarted = r.firstKickoff && isPast(r.firstKickoff);
+          const isFuture = !isOpen && !hasStarted;
           return (
             <button
               key={`ko_${r.id}`}
-              className={`tab ${predictTab === `ko_${r.id}` ? "active" : ""} ${!isOpen ? "past" : ""}`}
+              className={`tab ${predictTab === `ko_${r.id}` ? "active" : ""} ${isFuture ? "past" : ""}`}
               onClick={() => setPredictTab(`ko_${r.id}`)}
             >
               {r.id === "R32" ? "R32 Scores" : r.id === "R16" ? "R16 Scores" : r.id === "QF" ? "QF Scores" : r.id === "SF" ? "SF Scores" : "Final Scores"}
@@ -457,23 +459,37 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
           })()}
 
           {/* KO ROUND MATCH SCORES */}
-          {KO_ROUNDS.map(r => predictTab === `ko_${r.id}` && (
-            <div key={r.id} className="card">
-              <div className="card-label">
-                {r.label} — {openRound === r.id ? `predict scores — deadline: ${formatDeadline(r.deadline, r.tzLabel)}` : "locked (displayed for reference)"}
+          {KO_ROUNDS.map(r => {
+            if (predictTab !== `ko_${r.id}`) return null;
+            const isOpen = openRound === r.id;
+            const hasStarted = r.firstKickoff && isPast(r.firstKickoff);
+            return (
+              <div key={r.id} className="card">
+                <div className="card-label">
+                  {isOpen
+                    ? `${r.label} — predict scores — deadline: ${formatDeadline(r.deadline, r.tzLabel)}`
+                    : hasStarted
+                      ? `${r.label} — locked (displayed for reference)`
+                      : `${r.label} — not open yet`}
+                </div>
+                {!hasStarted && !isOpen && (
+                  <div className="notice info">⏳ This round hasn't started yet — picks will open before {formatDeadline(r.deadline, r.tzLabel)}.</div>
+                )}
+                {(isOpen || hasStarted) && !(koFixtures[r.id] || []).some(fx => fx?.home) && (
+                  <div className="notice info">⏳ Admin hasn't entered the fixtures for this round yet.</div>
+                )}
+                {(isOpen || hasStarted) && (
+                  <KoMatchGrid
+                    round={r.id}
+                    fixtures={koFixtures[r.id]}
+                    scores={koMatchPreds[r.id]}
+                    setScores={s => setKoMatchPreds(prev => ({ ...prev, [r.id]: s }))}
+                    disabled={!isOpen}
+                  />
+                )}
               </div>
-              {!(koFixtures[r.id] || []).some(fx => fx?.home) && (
-                <div className="notice info">⏳ Admin hasn't entered the fixtures for this round yet.</div>
-              )}
-              <KoMatchGrid
-                round={r.id}
-                fixtures={koFixtures[r.id]}
-                scores={koMatchPreds[r.id]}
-                setScores={s => setKoMatchPreds(prev => ({ ...prev, [r.id]: s }))}
-                disabled={openRound !== r.id}
-              />
-            </div>
-          ))}
+            );
+          })}
 
           {/* Save button — only shown when there's something editable */}
           {(openRound === "GROUP" || (openRound !== "GROUP" && openRound !== "CLOSED")) && (
