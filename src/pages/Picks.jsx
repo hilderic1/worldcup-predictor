@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "../supabase";
 import {
   GROUPS, GROUP_MATCHES, SORTED_TEAMS, FINAL_RANKS, KO_ROUNDS, GLOBAL_DEADLINE, f,
 } from "../constants";
 import { scoreMatch, isPast, currentOpenRound, formatDeadline } from "../utils";
 import KoMatchGrid from "../components/KoMatchGrid";
+
+// Sort GROUP_MATCHES by date+time ascending
+function matchSortKey(m) {
+  const [mo, d, yr] = m.date.split("/");
+  const [h, min] = m.time.split(":");
+  return new Date(`20${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}T${h.padStart(2,"0")}:${min}:00`).getTime();
+}
+const MATCHES_BY_TIME = [...GROUP_MATCHES].sort((a, b) => matchSortKey(a) - matchSortKey(b));
 
 export default function Picks({ player, actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank, koFixtures, koActualScores }) {
   const [predictTab, setPredictTab] = useState("matches");
@@ -31,8 +39,6 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
       supabase.from("knockout_predictions").select("*").eq("player_name", player.name),
       supabase.from("ko_match_predictions").select("*").eq("player_name", player.name),
     ]);
-    // Pre-fill every match with 1-0 so unfilled predictions default to a home-win (10 pts)
-    // rather than showing 0 pts and inflating the score when nothing is entered
     const mp = {};
     GROUP_MATCHES.forEach(m => { mp[m.id] = { home_score: 10, away_score: 10 }; });
     (pm.data || []).forEach(r => (mp[r.match_id] = { ...mp[r.match_id], ...r }));
@@ -110,6 +116,8 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
     }
   }
 
+  const matchesReadOnly = globalLocked || openRound !== "GROUP";
+
   return (
     <>
       <div className="section-header">
@@ -151,8 +159,8 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
 
       <div className="tab-row">
         <button
-          className={`tab ${predictTab === "matches" ? "active" : ""} ${openRound !== "GROUP" ? "past" : ""}`}
-          onClick={() => { if (openRound === "GROUP") setPredictTab("matches"); }}
+          className={`tab ${predictTab === "matches" ? "active" : ""} ${matchesReadOnly && !globalLocked ? "past" : ""}`}
+          onClick={() => setPredictTab("matches")}
         >
           ⚽ Group Scores
         </button>
@@ -161,7 +169,7 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
           <button
             key={k}
             className={`tab ${predictTab === k ? "active" : ""} ${globalLocked ? "past" : ""}`}
-            onClick={() => { if (!globalLocked) setPredictTab(k); }}
+            onClick={() => setPredictTab(k)}
           >
             {k === "groups" ? "📊 Groups" : k === "r32" ? "R32" : k === "r16" ? "R16" : k === "qf" ? "QF" : "🥇 Final"}
           </button>
@@ -173,7 +181,7 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             <button
               key={`ko_${r.id}`}
               className={`tab ${predictTab === `ko_${r.id}` ? "active" : ""} ${!isOpen ? "past" : ""}`}
-              onClick={() => { if (isOpen) setPredictTab(`ko_${r.id}`); }}
+              onClick={() => setPredictTab(`ko_${r.id}`)}
             >
               {r.id === "R32" ? "R32 Scores" : r.id === "R16" ? "R16 Scores" : r.id === "QF" ? "QF Scores" : r.id === "SF" ? "SF Scores" : "Final Scores"}
             </button>
@@ -185,21 +193,36 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
         <div className="spinner">Loading…</div>
       ) : (
         <>
-          {/* GROUP MATCH SCORES */}
+          {/* GROUP MATCH SCORES — sorted by kickoff time */}
           {predictTab === "matches" && (
-            openRound !== "GROUP"
-              ? <div className="notice info">🔒 Group stage predictions are locked.</div>
-              : Object.entries(GROUPS).map(([grp]) => (
-                <div key={grp} className="card">
-                  <div className="card-label">Group {grp}</div>
-                  <div className="match-list">
-                    {GROUP_MATCHES.filter(m => m.group === grp).map(m => {
-                      const p = matchPreds[m.id] || {};
-                      const a = actualMatches[m.id];
-                      const sc = a ? scoreMatch(p, a) : null;
-                      return (
-                        <div key={m.id} className="match-row">
-                          <div className="team-l">{f(m.home)} {m.home}</div>
+            <div className="card">
+              {matchesReadOnly && (
+                <div className="notice info" style={{ marginBottom: 12 }}>
+                  🔒 Group stage predictions are locked — displayed for reference.
+                </div>
+              )}
+              <div className="match-list">
+                {MATCHES_BY_TIME.map(m => {
+                  const p = matchPreds[m.id] || {};
+                  const a = actualMatches[m.id];
+                  const sc = a ? scoreMatch(p, a) : null;
+                  const hs = p.home_score, as = p.away_score;
+                  const isDefault = +hs === 10 && +as === 10;
+                  return (
+                    <div key={m.id} className="match-row">
+                      <div className="team-l">{f(m.home)} {m.home}</div>
+                      {matchesReadOnly ? (
+                        <>
+                          <div className="score-inp" style={{ textAlign: "center", fontWeight: 700, color: isDefault ? "var(--text-dark)" : "var(--text-main)" }}>
+                            {isDefault ? "–" : hs}
+                          </div>
+                          <div className="sep">–</div>
+                          <div className="score-inp" style={{ textAlign: "center", fontWeight: 700, color: isDefault ? "var(--text-dark)" : "var(--text-main)" }}>
+                            {isDefault ? "–" : as}
+                          </div>
+                        </>
+                      ) : (
+                        <>
                           <input
                             className="score-inp"
                             type="number" min="0" max="20"
@@ -213,27 +236,34 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
                             value={p.away_score ?? ""} placeholder="0"
                             onChange={e => setMatchPreds(prev => ({ ...prev, [m.id]: { ...prev[m.id], away_score: e.target.value } }))}
                           />
-                          <div className="team-r">{m.away} {f(m.away)}</div>
-                          <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontSize: 10, color: "#2a3a5a" }}>{m.date} {m.time} UTC</span>
-                            {sc !== null && (
-                              <span className="match-pts">
-                                +{sc.total}pts (result {sc.result} · accuracy {sc.accuracy} · exact {sc.exact})
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))
+                        </>
+                      )}
+                      <div className="team-r">{m.away} {f(m.away)}</div>
+                      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 10, color: "#2a3a5a" }}>
+                          Grp {m.group} · {m.date} {m.time} UTC
+                        </span>
+                        {sc !== null && (
+                          <span className="match-pts">
+                            +{sc.total}pts (result {sc.result} · accuracy {sc.accuracy} · exact {sc.exact})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {/* GROUP TOP 3 */}
           {predictTab === "groups" && (
             <div className="card">
-              <div className="card-label">Predict 1st, 2nd and 3rd per group — locked at global deadline</div>
+              <div className="card-label">
+                {globalLocked
+                  ? "Group rankings — locked (displayed for reference)"
+                  : "Predict 1st, 2nd and 3rd per group — locked at global deadline"}
+              </div>
               <div className="group-grid">
                 {Object.entries(GROUPS).map(([grp, teams]) => {
                   const v = groupTopThree[grp] || { first: "", second: "", third: "" };
@@ -243,17 +273,22 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
                       {["first", "second", "third"].map((rank, i) => (
                         <div key={rank} className="rank-row">
                           <div className="rank-num">{i + 1}</div>
-                          <select
-                            className="rank-sel"
-                            disabled={globalLocked}
-                            value={v[rank] || ""}
-                            onChange={e => setGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: e.target.value } }))}
-                          >
-                            <option value="">— pick —</option>
-                            {[...teams].sort((a, b) => a.localeCompare(b)).map(t => (
-                              <option key={t} value={t}>{f(t)} {t}</option>
-                            ))}
-                          </select>
+                          {globalLocked ? (
+                            <div className="rank-sel" style={{ display: "flex", alignItems: "center", padding: "0 8px", color: v[rank] ? "var(--text-main)" : "var(--text-dark)" }}>
+                              {v[rank] ? <>{f(v[rank])} {v[rank]}</> : "—"}
+                            </div>
+                          ) : (
+                            <select
+                              className="rank-sel"
+                              value={v[rank] || ""}
+                              onChange={e => setGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: e.target.value } }))}
+                            >
+                              <option value="">— pick —</option>
+                              {[...teams].sort((a, b) => a.localeCompare(b)).map(t => (
+                                <option key={t} value={t}>{f(t)} {t}</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -268,25 +303,34 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             const dupes = new Set(r32Pred.filter((t, i) => t && r32Pred.indexOf(t) !== i));
             return (
               <div className="card">
-                <div className="card-label">All 32 R32 qualifiers — 10pts per correct team — locked at global deadline</div>
-                {dupes.size > 0 && (
+                <div className="card-label">
+                  {globalLocked
+                    ? "R32 qualifiers — locked (displayed for reference)"
+                    : "All 32 R32 qualifiers — 10pts per correct team — locked at global deadline"}
+                </div>
+                {!globalLocked && dupes.size > 0 && (
                   <div className="notice warn" style={{ marginBottom: 12 }}>
                     ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
                   </div>
                 )}
                 <div className="ko-grid">
                   {Array(32).fill(0).map((_, i) => (
-                    <select
-                      key={i}
-                      className="rank-sel"
-                      disabled={globalLocked}
-                      value={r32Pred[i] || ""}
-                      style={dupes.has(r32Pred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
-                      onChange={e => { const u = [...r32Pred]; u[i] = e.target.value; setR32Pred(u); }}
-                    >
-                      <option value="">— pick {i + 1} —</option>
-                      {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                    </select>
+                    globalLocked ? (
+                      <div key={i} className="rank-sel" style={{ display: "flex", alignItems: "center", padding: "0 8px", color: r32Pred[i] ? "var(--text-main)" : "var(--text-dark)" }}>
+                        {r32Pred[i] ? <>{f(r32Pred[i])} {r32Pred[i]}</> : `#${i + 1}`}
+                      </div>
+                    ) : (
+                      <select
+                        key={i}
+                        className="rank-sel"
+                        value={r32Pred[i] || ""}
+                        style={dupes.has(r32Pred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
+                        onChange={e => { const u = [...r32Pred]; u[i] = e.target.value; setR32Pred(u); }}
+                      >
+                        <option value="">— pick {i + 1} —</option>
+                        {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                      </select>
+                    )
                   ))}
                 </div>
               </div>
@@ -298,25 +342,34 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             const dupes = new Set(r16Pred.filter((t, i) => t && r16Pred.indexOf(t) !== i));
             return (
               <div className="card">
-                <div className="card-label">16 R16 qualifiers — 15pts per correct team — locked at global deadline</div>
-                {dupes.size > 0 && (
+                <div className="card-label">
+                  {globalLocked
+                    ? "R16 qualifiers — locked (displayed for reference)"
+                    : "16 R16 qualifiers — 15pts per correct team — locked at global deadline"}
+                </div>
+                {!globalLocked && dupes.size > 0 && (
                   <div className="notice warn" style={{ marginBottom: 12 }}>
                     ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
                   </div>
                 )}
                 <div className="ko-grid">
                   {Array(16).fill(0).map((_, i) => (
-                    <select
-                      key={i}
-                      className="rank-sel"
-                      disabled={globalLocked}
-                      value={r16Pred[i] || ""}
-                      style={dupes.has(r16Pred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
-                      onChange={e => { const u = [...r16Pred]; u[i] = e.target.value; setR16Pred(u); }}
-                    >
-                      <option value="">— pick {i + 1} —</option>
-                      {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                    </select>
+                    globalLocked ? (
+                      <div key={i} className="rank-sel" style={{ display: "flex", alignItems: "center", padding: "0 8px", color: r16Pred[i] ? "var(--text-main)" : "var(--text-dark)" }}>
+                        {r16Pred[i] ? <>{f(r16Pred[i])} {r16Pred[i]}</> : `#${i + 1}`}
+                      </div>
+                    ) : (
+                      <select
+                        key={i}
+                        className="rank-sel"
+                        value={r16Pred[i] || ""}
+                        style={dupes.has(r16Pred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
+                        onChange={e => { const u = [...r16Pred]; u[i] = e.target.value; setR16Pred(u); }}
+                      >
+                        <option value="">— pick {i + 1} —</option>
+                        {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                      </select>
+                    )
                   ))}
                 </div>
               </div>
@@ -328,25 +381,34 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             const dupes = new Set(qfPred.filter((t, i) => t && qfPred.indexOf(t) !== i));
             return (
               <div className="card">
-                <div className="card-label">8 Quarter-Finalists — 20pts per correct team — locked at global deadline</div>
-                {dupes.size > 0 && (
+                <div className="card-label">
+                  {globalLocked
+                    ? "Quarter-Finalists — locked (displayed for reference)"
+                    : "8 Quarter-Finalists — 20pts per correct team — locked at global deadline"}
+                </div>
+                {!globalLocked && dupes.size > 0 && (
                   <div className="notice warn" style={{ marginBottom: 12 }}>
                     ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
                   </div>
                 )}
                 <div className="ko-grid">
                   {Array(8).fill(0).map((_, i) => (
-                    <select
-                      key={i}
-                      className="rank-sel"
-                      disabled={globalLocked}
-                      value={qfPred[i] || ""}
-                      style={dupes.has(qfPred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
-                      onChange={e => { const u = [...qfPred]; u[i] = e.target.value; setQfPred(u); }}
-                    >
-                      <option value="">— pick {i + 1} —</option>
-                      {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                    </select>
+                    globalLocked ? (
+                      <div key={i} className="rank-sel" style={{ display: "flex", alignItems: "center", padding: "0 8px", color: qfPred[i] ? "var(--text-main)" : "var(--text-dark)" }}>
+                        {qfPred[i] ? <>{f(qfPred[i])} {qfPred[i]}</> : `#${i + 1}`}
+                      </div>
+                    ) : (
+                      <select
+                        key={i}
+                        className="rank-sel"
+                        value={qfPred[i] || ""}
+                        style={dupes.has(qfPred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}}
+                        onChange={e => { const u = [...qfPred]; u[i] = e.target.value; setQfPred(u); }}
+                      >
+                        <option value="">— pick {i + 1} —</option>
+                        {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                      </select>
+                    )
                   ))}
                 </div>
               </div>
@@ -358,8 +420,12 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             const dupes = new Set(sfRankPred.filter((t, i) => t && sfRankPred.indexOf(t) !== i));
             return (
               <div className="card">
-                <div className="card-label">Final standings 1st–4th — 25pts per team + 5pts correct rank — locked at global deadline</div>
-                {dupes.size > 0 && (
+                <div className="card-label">
+                  {globalLocked
+                    ? "Final standings 1st–4th — locked (displayed for reference)"
+                    : "Final standings 1st–4th — 25pts per team + 5pts correct rank — locked at global deadline"}
+                </div>
+                {!globalLocked && dupes.size > 0 && (
                   <div className="notice warn" style={{ marginBottom: 12 }}>
                     ⚠ Duplicate teams: <strong>{[...dupes].join(", ")}</strong>. Each team can only appear once.
                   </div>
@@ -368,16 +434,21 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
                   {FINAL_RANKS.map((label, i) => (
                     <div key={i} className="sf-row">
                       <div className="sf-rank-label">{label}</div>
-                      <select
-                        className="rank-sel"
-                        style={{ maxWidth: 220, ...(dupes.has(sfRankPred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}) }}
-                        disabled={globalLocked}
-                        value={sfRankPred[i] || ""}
-                        onChange={e => { const u = [...sfRankPred]; u[i] = e.target.value; setSfRankPred(u); }}
-                      >
-                        <option value="">— pick team —</option>
-                        {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                      </select>
+                      {globalLocked ? (
+                        <div className="rank-sel" style={{ display: "flex", alignItems: "center", padding: "0 8px", maxWidth: 220, color: sfRankPred[i] ? "var(--text-main)" : "var(--text-dark)" }}>
+                          {sfRankPred[i] ? <>{f(sfRankPred[i])} {sfRankPred[i]}</> : "—"}
+                        </div>
+                      ) : (
+                        <select
+                          className="rank-sel"
+                          style={{ maxWidth: 220, ...(dupes.has(sfRankPred[i]) ? { borderColor: "#cc3333", background: "#2a0a0a" } : {}) }}
+                          value={sfRankPred[i] || ""}
+                          onChange={e => { const u = [...sfRankPred]; u[i] = e.target.value; setSfRankPred(u); }}
+                        >
+                          <option value="">— pick team —</option>
+                          {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                        </select>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -389,7 +460,7 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
           {KO_ROUNDS.map(r => predictTab === `ko_${r.id}` && (
             <div key={r.id} className="card">
               <div className="card-label">
-                {r.label} — predict scores — deadline: {formatDeadline(r.deadline, r.tzLabel)}
+                {r.label} — {openRound === r.id ? `predict scores — deadline: ${formatDeadline(r.deadline, r.tzLabel)}` : "locked (displayed for reference)"}
               </div>
               {!(koFixtures[r.id] || []).some(fx => fx?.home) && (
                 <div className="notice info">⏳ Admin hasn't entered the fixtures for this round yet.</div>
@@ -404,18 +475,21 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             </div>
           ))}
 
-          <div className="save-row">
-            <button
-              className={`btn-save ${saveState === "saved" ? "saved" : ""}`}
-              disabled={saveState === "saving"}
-              onClick={savePredictions}
-            >
-              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Predictions"}
-            </button>
-            {saveState === "error" && (
-              <span style={{ color: "#cc3333", fontSize: 12 }}>Save failed — check your connection</span>
-            )}
-          </div>
+          {/* Save button — only shown when there's something editable */}
+          {(openRound === "GROUP" || (openRound !== "GROUP" && openRound !== "CLOSED")) && (
+            <div className="save-row">
+              <button
+                className={`btn-save ${saveState === "saved" ? "saved" : ""}`}
+                disabled={saveState === "saving"}
+                onClick={savePredictions}
+              >
+                {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Predictions"}
+              </button>
+              {saveState === "error" && (
+                <span style={{ color: "#cc3333", fontSize: 12 }}>Save failed — check your connection</span>
+              )}
+            </div>
+          )}
         </>
       )}
     </>
