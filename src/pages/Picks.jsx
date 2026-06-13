@@ -491,8 +491,12 @@ export default function Picks({ player, actualMatches, actualGroupTopThree, actu
             );
           })}
 
-          {/* Save button — only shown when there's something editable */}
-          {(openRound === "GROUP" || (openRound !== "GROUP" && openRound !== "CLOSED")) && (
+          {/* Save button — only shown when the current tab has something editable */}
+          {(
+            (predictTab === "matches" && openRound === "GROUP") ||
+            (["groups","r32","r16","qf","sf"].includes(predictTab) && !globalLocked) ||
+            (predictTab.startsWith("ko_") && openRound === predictTab.slice(3))
+          ) && (
             <div className="save-row">
               <button
                 className={`btn-save ${saveState === "saved" ? "saved" : ""}`}
