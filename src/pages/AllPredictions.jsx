@@ -5,6 +5,13 @@ import {
 } from "../constants";
 import { scoreMatch } from "../utils";
 
+function matchSortKey(m) {
+  const [mo, d, yr] = m.date.split("/");
+  const [h, min] = m.time.split(":");
+  return new Date(`20${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}T${h.padStart(2,"0")}:${min}:00`).getTime();
+}
+const MATCHES_BY_TIME = [...GROUP_MATCHES].sort((a, b) => matchSortKey(a) - matchSortKey(b));
+
 function getMatchPickClass(pred, actual) {
   if (!actual || actual.home_score == null) return "pick-pending";
   if (!pred || pred.home_score == null) return "pick-empty";
@@ -209,70 +216,67 @@ export default function AllPredictions({
         <>
           {/* ── GROUP MATCH SCORES ── */}
           {activeTab === "group-scores" && (
-            Object.entries(GROUPS).map(([grp]) => (
-              <div key={grp} className="card">
-                <div className="card-label">Group {grp}</div>
-                <div className="match-list">
-                  {GROUP_MATCHES.filter(m => m.group === grp).map(m => {
-                    const lPred = leftPreds.matches[m.id] || {};
-                    const rPred = comparing ? (rightPreds.matches[m.id] || {}) : null;
-                    const actual = actualMatches[m.id];
-                    const lCls = getMatchPickClass(lPred, actual);
-                    const rCls = rPred ? getMatchPickClass(rPred, actual) : null;
-                    const lSc = actual ? scoreMatch(lPred, actual) : null;
-                    const rSc = (actual && rPred) ? scoreMatch(rPred, actual) : null;
-                    return (
-                      <div key={m.id} className="match-row">
-                        {comparing ? (
-                          <>
-                            <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
-                              <div style={{ textAlign: "right" }}>
-                                <span className={`score-badge ${lCls}`} style={{ color: PLAYER_COLORS[leftPlayer] }}>
-                                  {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
-                                </span>
-                              </div>
-                              <div style={{ textAlign: "center", fontSize: 12 }}>
-                                <span style={{ color: "#8a9aba" }}>{f(m.home)} {m.home}</span>
-                                <span style={{ margin: "0 6px", color: "var(--text-dark)" }}>vs</span>
-                                <span style={{ color: "#8a9aba" }}>{m.away} {f(m.away)}</span>
-                              </div>
-                              <div style={{ textAlign: "left" }}>
-                                <span className={`score-badge ${rCls}`} style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                                  {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
-                                </span>
-                              </div>
-                            </div>
-                            <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
-                              <span style={{ color: PLAYER_COLORS[leftPlayer] }}>
-                                {lSc !== null ? `${lSc.total}pts` : "—"}
-                              </span>
-                              <span>{m.date} {m.time} UTC {actual ? `(${actual.home_score}–${actual.away_score})` : "not played"}</span>
-                              <span style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                                {rSc !== null ? `${rSc.total}pts` : "—"}
+            <div className="card">
+              <div className="match-list">
+                {MATCHES_BY_TIME.map(m => {
+                  const lPred = leftPreds.matches[m.id] || {};
+                  const rPred = comparing ? (rightPreds.matches[m.id] || {}) : null;
+                  const actual = actualMatches[m.id];
+                  const lCls = getMatchPickClass(lPred, actual);
+                  const rCls = rPred ? getMatchPickClass(rPred, actual) : null;
+                  const lSc = actual ? scoreMatch(lPred, actual) : null;
+                  const rSc = (actual && rPred) ? scoreMatch(rPred, actual) : null;
+                  return (
+                    <div key={m.id} className="match-row">
+                      {comparing ? (
+                        <>
+                          <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
+                            <div style={{ textAlign: "right" }}>
+                              <span className={`score-badge ${lCls}`} style={{ color: PLAYER_COLORS[leftPlayer] }}>
+                                {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
                               </span>
                             </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="team-l">{f(m.home)} {m.home}</div>
-                            <div className={`score-badge ${lCls}`}>{lPred.home_score ?? "–"}</div>
-                            <div className="sep">–</div>
-                            <div className={`score-badge ${lCls}`}>{lPred.away_score ?? "–"}</div>
-                            <div className="team-r">{m.away} {f(m.away)}</div>
-                            <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <span style={{ fontSize: 10, color: "#2a3a5a" }}>{m.date} {m.time} UTC</span>
-                              {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
-                              {actual && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
-                              {!actual && <span style={{ fontSize: 10, color: "var(--text-dark)" }}>not played yet</span>}
+                            <div style={{ textAlign: "center", fontSize: 12 }}>
+                              <span style={{ color: "#8a9aba" }}>{f(m.home)} {m.home}</span>
+                              <span style={{ margin: "0 6px", color: "var(--text-dark)" }}>vs</span>
+                              <span style={{ color: "#8a9aba" }}>{m.away} {f(m.away)}</span>
                             </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                            <div style={{ textAlign: "left" }}>
+                              <span className={`score-badge ${rCls}`} style={{ color: PLAYER_COLORS[rightPlayer] }}>
+                                {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
+                            <span style={{ color: PLAYER_COLORS[leftPlayer] }}>
+                              {lSc !== null ? `${lSc.total}pts` : "—"}
+                            </span>
+                            <span>Grp {m.group} · {m.date} {m.time} UTC {actual ? `(${actual.home_score}–${actual.away_score})` : "not played"}</span>
+                            <span style={{ color: PLAYER_COLORS[rightPlayer] }}>
+                              {rSc !== null ? `${rSc.total}pts` : "—"}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="team-l">{f(m.home)} {m.home}</div>
+                          <div className={`score-badge ${lCls}`}>{lPred.home_score ?? "–"}</div>
+                          <div className="sep">–</div>
+                          <div className={`score-badge ${lCls}`}>{lPred.away_score ?? "–"}</div>
+                          <div className="team-r">{m.away} {f(m.away)}</div>
+                          <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: 10, color: "#2a3a5a" }}>Grp {m.group} · {m.date} {m.time} UTC</span>
+                            {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
+                            {actual && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
+                            {!actual && <span style={{ fontSize: 10, color: "var(--text-dark)" }}>not played yet</span>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ))
+            </div>
           )}
 
           {/* ── QUALIFYING PICKS ── */}

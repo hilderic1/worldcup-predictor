@@ -3,6 +3,13 @@ const getXLSX = () => import("xlsx").then(m => m);
 import { GROUPS, GROUP_MATCHES, KO_ROUNDS, FINAL_RANKS, PLAYERS } from "../constants";
 import { supabase } from "../supabase";
 
+function matchSortKey(m) {
+  const [mo, d, yr] = m.date.split("/");
+  const [h, min] = m.time.split(":");
+  return new Date(`20${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}T${h.padStart(2,"0")}:${min}:00`).getTime();
+}
+const MATCHES_BY_TIME = [...GROUP_MATCHES].sort((a, b) => matchSortKey(a) - matchSortKey(b));
+
 // ── Data fetching ──────────────────────────────────────────────────────────
 
 export async function fetchPlayerPreds(playerName) {
@@ -89,22 +96,20 @@ function buildPlayerSheet(XLSX, preds, fixtures = {}, restrictToStartedRounds = 
   rows.push(["GROUP STAGE — MATCH SCORE PREDICTIONS"]);
   rows.push(["Group", "Match", "Date", "Home Team", "Pred Home", "Pred Away", "Away Team"]);
 
-  Object.keys(GROUPS).forEach(grp => {
-    GROUP_MATCHES.filter(m => m.group === grp).forEach(m => {
-      const p = preds.matches[m.id] || {};
-      const hs = p.home_score;
-      const as = p.away_score;
-      const isDefault = +hs === 10 && +as === 10;
-      rows.push([
-        `Group ${grp}`,
-        m.id,
-        m.date,
-        m.home,
-        isDefault || hs == null ? "" : hs,
-        isDefault || as == null ? "" : as,
-        m.away,
-      ]);
-    });
+  MATCHES_BY_TIME.forEach(m => {
+    const p = preds.matches[m.id] || {};
+    const hs = p.home_score;
+    const as = p.away_score;
+    const isDefault = +hs === 10 && +as === 10;
+    rows.push([
+      `Group ${m.group}`,
+      m.id,
+      `${m.date} ${m.time}`,
+      m.home,
+      isDefault || hs == null ? "" : hs,
+      isDefault || as == null ? "" : as,
+      m.away,
+    ]);
   });
 
   // ── Group rankings ──
@@ -226,22 +231,20 @@ export async function exportComparison() {
   const startedRounds = KO_ROUNDS.filter(r => r.firstKickoff && new Date() >= new Date(r.firstKickoff));
   const rows = [];
 
-  // ── Group match scores ──
+  // ── Group match scores (sorted by kickoff time) ──
   rows.push(["GROUP STAGE — MATCH SCORE PREDICTIONS"]);
-  rows.push(["Match", "Home Team", "Away Team", "Date", "Actual", ...PLAYERS]);
-  Object.keys(GROUPS).forEach(grp => {
-    GROUP_MATCHES.filter(m => m.group === grp).forEach(m => {
-      const act = actualMatches[m.id];
-      const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
-      rows.push([
-        m.id, m.home, m.away, m.date, actualScore,
-        ...PLAYERS.map(name => {
-          const p = byPlayer[name].matches[m.id] || {};
-          const hs = p.home_score, as = p.away_score;
-          return (hs == null || (+hs === 10 && +as === 10)) ? "" : `${hs}-${as}`;
-        }),
-      ]);
-    });
+  rows.push(["Group", "Match", "Date & Time", "Home Team", "Away Team", "Actual", ...PLAYERS]);
+  MATCHES_BY_TIME.forEach(m => {
+    const act = actualMatches[m.id];
+    const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
+    rows.push([
+      `Group ${m.group}`, m.id, `${m.date} ${m.time}`, m.home, m.away, actualScore,
+      ...PLAYERS.map(name => {
+        const p = byPlayer[name].matches[m.id] || {};
+        const hs = p.home_score, as = p.away_score;
+        return (hs == null || (+hs === 10 && +as === 10)) ? "" : `${hs}-${as}`;
+      }),
+    ]);
   });
 
   // ── Group rankings ──
