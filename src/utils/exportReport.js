@@ -199,18 +199,42 @@ export async function exportMyPicks(playerName) {
 /** All players: one sheet comparing all players side by side */
 export async function exportComparison() {
   const XLSX = await getXLSX();
-  const { byPlayer, fixtures } = await fetchAllPlayerPreds();
+  const [{ byPlayer, fixtures }, ra, rg, rk, rs] = await Promise.all([
+    fetchAllPlayerPreds(),
+    supabase.from("actual_results").select("*"),
+    supabase.from("actual_group_rankings").select("*"),
+    supabase.from("actual_knockout").select("*"),
+    supabase.from("ko_actual_scores").select("*"),
+  ]);
+
+  // Build actuals lookup
+  const actualMatches = {};
+  (ra.data || []).forEach(r => (actualMatches[r.match_id] = r));
+  const actualGroups = {};
+  (rg.data || []).forEach(r => {
+    if (Array.isArray(r.ranking))
+      actualGroups[r.group_id] = { first: r.ranking[0] || "", second: r.ranking[1] || "", third: r.ranking[2] || "" };
+  });
+  const actualKO = {};
+  (rk.data || []).forEach(r => (actualKO[r.round] = r.teams || []));
+  const actualKOScores = {};
+  (rs.data || []).forEach(r => {
+    if (!actualKOScores[r.round]) actualKOScores[r.round] = [];
+    actualKOScores[r.round][r.game_index] = { home_score: r.home_score, away_score: r.away_score };
+  });
+
   const startedRounds = KO_ROUNDS.filter(r => r.firstKickoff && new Date() >= new Date(r.firstKickoff));
   const rows = [];
-  const ph = ["", ...PLAYERS]; // player header row
 
   // ── Group match scores ──
   rows.push(["GROUP STAGE — MATCH SCORE PREDICTIONS"]);
-  rows.push(["Match", "Home Team", "Away Team", "Date", ...PLAYERS]);
+  rows.push(["Match", "Home Team", "Away Team", "Date", "Actual", ...PLAYERS]);
   Object.keys(GROUPS).forEach(grp => {
     GROUP_MATCHES.filter(m => m.group === grp).forEach(m => {
+      const act = actualMatches[m.id];
+      const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
       rows.push([
-        m.id, m.home, m.away, m.date,
+        m.id, m.home, m.away, m.date, actualScore,
         ...PLAYERS.map(name => {
           const p = byPlayer[name].matches[m.id] || {};
           const hs = p.home_score, as = p.away_score;
@@ -223,12 +247,13 @@ export async function exportComparison() {
   // ── Group rankings ──
   rows.push([]);
   rows.push(["GROUP STAGE — TOP 3 RANKINGS"]);
-  rows.push(["Group", "Position", ...PLAYERS]);
+  rows.push(["Group", "Position", "Actual", ...PLAYERS]);
   Object.keys(GROUPS).forEach(grp => {
     ["1st", "2nd", "3rd"].forEach((pos, i) => {
       const key = ["first", "second", "third"][i];
       rows.push([
         `Group ${grp}`, pos,
+        actualGroups[grp]?.[key] || "",
         ...PLAYERS.map(name => byPlayer[name].groupTopThree[grp]?.[key] || ""),
       ]);
     });
@@ -238,15 +263,20 @@ export async function exportComparison() {
   rows.push([]);
   rows.push(["KNOCKOUT QUALIFIER PICKS"]);
   [
-    { label: "Round of 32 (32 teams)", key: "r32" },
-    { label: "Round of 16 (16 teams)", key: "r16" },
-    { label: "Quarter-Finals (8 teams)", key: "qf" },
-  ].forEach(({ label, key }) => {
-    rows.push([label, ...ph.slice(1)]);
-    const maxLen = Math.max(...PLAYERS.map(n => (byPlayer[n][key] || []).filter(Boolean).length));
+    { label: "Round of 32 (32 teams)", key: "r32", round: "R32" },
+    { label: "Round of 16 (16 teams)", key: "r16", round: "R16" },
+    { label: "Quarter-Finals (8 teams)", key: "qf",  round: "QF"  },
+  ].forEach(({ label, key, round }) => {
+    const actualTeams = [...(actualKO[round] || [])].filter(Boolean).sort();
+    rows.push([label, "Actual", ...PLAYERS]);
+    const maxLen = Math.max(
+      actualTeams.length,
+      ...PLAYERS.map(n => (byPlayer[n][key] || []).filter(Boolean).length),
+    );
     for (let i = 0; i < maxLen; i++) {
       rows.push([
         `#${i + 1}`,
+        actualTeams[i] || "",
         ...PLAYERS.map(name => (byPlayer[name][key] || []).filter(Boolean).sort()[i] || ""),
       ]);
     }
@@ -255,21 +285,23 @@ export async function exportComparison() {
 
   // Final standings
   rows.push(["FINAL STANDINGS (1st–4th)"]);
-  rows.push(["Position", ...PLAYERS]);
+  rows.push(["Position", "Actual", ...PLAYERS]);
   FINAL_RANKS.forEach((pos, i) => {
-    rows.push([pos, ...PLAYERS.map(name => (byPlayer[name].sfRank || [])[i] || "")]);
+    rows.push([pos, actualKO["SF_RANK"]?.[i] || "", ...PLAYERS.map(name => (byPlayer[name].sfRank || [])[i] || "")]);
   });
 
   // ── KO match score predictions (started rounds only) ──
   if (startedRounds.length > 0) {
     rows.push([]);
     rows.push(["KNOCKOUT MATCH SCORE PREDICTIONS (started rounds)"]);
-    rows.push(["Round", "Match", "Home", "Away", ...PLAYERS]);
+    rows.push(["Round", "Match", "Home", "Away", "Actual", ...PLAYERS]);
     startedRounds.forEach(r => {
       (fixtures[r.id] || []).forEach((fix, i) => {
         if (!fix?.home) return;
+        const act = (actualKOScores[r.id] || [])[i];
+        const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
         rows.push([
-          r.label, i + 1, fix.home, fix.away,
+          r.label, i + 1, fix.home, fix.away, actualScore,
           ...PLAYERS.map(name => {
             const p = (byPlayer[name].koMatches[r.id] || [])[i] || {};
             return p.home_score != null ? `${p.home_score}-${p.away_score}` : "";
