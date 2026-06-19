@@ -1237,7 +1237,7 @@ export default function App() {
                     <span>Actual 1st, 2nd and 3rd per group</span>
                     <button
                       className="btn-sm"
-                      onClick={() => {
+                      onClick={async () => {
                         const groupUpdates = {};
                         const r32Updates = [...actualR32];
 
@@ -1255,7 +1255,6 @@ export default function App() {
                             };
                           }
 
-                          // Propagate winner/runner-up to matching R32 slots
                           R32_MATCHES.forEach((m, i) => {
                             [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
                               if (slot.grp !== grp) return;
@@ -1265,10 +1264,22 @@ export default function App() {
                           });
                         });
 
-                        if (Object.keys(groupUpdates).length)
-                          setActualGroupTopThree(prev => ({ ...prev, ...groupUpdates }));
-                        if (r32Updates.some((t, i) => t !== actualR32[i]))
+                        const newGroupTopThree = { ...actualGroupTopThree, ...groupUpdates };
+
+                        // Persist immediately — don't wait for manual Save
+                        if (Object.keys(groupUpdates).length) {
+                          const groupRows = Object.entries(newGroupTopThree).map(([group_id, v]) => ({
+                            group_id, ranking: [v.first || "", v.second || "", v.third || ""],
+                          }));
+                          await supabase.from("actual_group_rankings").upsert(groupRows, { onConflict: "group_id" });
+                          setActualGroupTopThree(newGroupTopThree);
+                        }
+                        if (r32Updates.some((t, i) => t !== actualR32[i])) {
+                          await supabase.from("actual_knockout").upsert(
+                            [{ round: "R32", teams: r32Updates }], { onConflict: "round" }
+                          );
                           setActualR32(r32Updates);
+                        }
                       }}
                     >
                       ✓ Auto-fill clinched
