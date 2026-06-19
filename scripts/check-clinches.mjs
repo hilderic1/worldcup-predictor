@@ -212,12 +212,84 @@ if (newEvents.length === 0) {
   process.exit(0);
 }
 
-const { error: insertErr } = await supabase
-  .from("clinch_events")
-  .insert(newEvents);
-
+// ── Save clinch events ─────────────────────────────────────────────────────
+const { error: insertErr } = await supabase.from("clinch_events").insert(newEvents);
 if (insertErr) { console.error("insert error:", insertErr); process.exit(1); }
 
+// ── Update actual_group_rankings ───────────────────────────────────────────
+// Fetch current rankings first so we only overwrite empty slots
+const { data: rankingRows } = await supabase.from("actual_group_rankings").select("*");
+const rankings = {};
+(rankingRows || []).forEach(r => {
+  if (Array.isArray(r.ranking))
+    rankings[r.group_id] = { first: r.ranking[0] || "", second: r.ranking[1] || "", third: r.ranking[2] || "" };
+});
+
+const rankingUpdates = [];
+for (const e of newEvents) {
+  const cur = rankings[e.group_id] || { first: "", second: "", third: "" };
+  const key  = e.position === 1 ? "first" : "second";
+  if (!cur[key]) {
+    cur[key] = e.team;
+    rankings[e.group_id] = cur;
+    rankingUpdates.push({
+      group_id: e.group_id,
+      ranking: [cur.first, cur.second, cur.third],
+    });
+  }
+}
+
+if (rankingUpdates.length) {
+  const { error: rErr } = await supabase
+    .from("actual_group_rankings")
+    .upsert(rankingUpdates, { onConflict: "group_id" });
+  if (rErr) console.error("ranking update error:", rErr);
+}
+
+// ── Update actual_knockout R32 bracket ────────────────────────────────────
+const R32_MATCHES = [
+  { match: "M73", home: { type: "R", grp: "A" }, away: { type: "R", grp: "B" } },
+  { match: "M74", home: { type: "W", grp: "E" }, away: { type: "3", col: 3  } },
+  { match: "M75", home: { type: "W", grp: "F" }, away: { type: "R", grp: "C" } },
+  { match: "M76", home: { type: "W", grp: "C" }, away: { type: "R", grp: "F" } },
+  { match: "M77", home: { type: "W", grp: "I" }, away: { type: "3", col: 5  } },
+  { match: "M78", home: { type: "R", grp: "E" }, away: { type: "R", grp: "I" } },
+  { match: "M79", home: { type: "W", grp: "A" }, away: { type: "3", col: 0  } },
+  { match: "M80", home: { type: "W", grp: "L" }, away: { type: "3", col: 7  } },
+  { match: "M81", home: { type: "W", grp: "D" }, away: { type: "3", col: 2  } },
+  { match: "M82", home: { type: "W", grp: "G" }, away: { type: "3", col: 4  } },
+  { match: "M83", home: { type: "R", grp: "K" }, away: { type: "R", grp: "L" } },
+  { match: "M84", home: { type: "W", grp: "H" }, away: { type: "R", grp: "J" } },
+  { match: "M85", home: { type: "W", grp: "B" }, away: { type: "3", col: 1  } },
+  { match: "M86", home: { type: "W", grp: "J" }, away: { type: "R", grp: "H" } },
+  { match: "M87", home: { type: "W", grp: "K" }, away: { type: "3", col: 6  } },
+  { match: "M88", home: { type: "R", grp: "D" }, away: { type: "R", grp: "G" } },
+];
+
+const { data: koRow } = await supabase
+  .from("actual_knockout")
+  .select("teams")
+  .eq("round", "R32")
+  .single();
+
+const r32Teams = (koRow?.teams || Array(32).fill("")).slice();
+
+for (const e of newEvents) {
+  const r32Type = e.position === 1 ? "W" : "R";
+  R32_MATCHES.forEach((m, i) => {
+    [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
+      if (slot.grp === e.group_id && slot.type === r32Type && !r32Teams[idx])
+        r32Teams[idx] = e.team;
+    });
+  });
+}
+
+const { error: koErr } = await supabase
+  .from("actual_knockout")
+  .upsert([{ round: "R32", teams: r32Teams }], { onConflict: "round" });
+if (koErr) console.error("R32 update error:", koErr);
+
+// ── Summary ────────────────────────────────────────────────────────────────
 console.log("New clinches recorded:");
 for (const e of newEvents) {
   console.log(`  Group ${e.group_id}: ${e.team} clinched ${e.position === 1 ? "1st" : "2nd"} place`);
