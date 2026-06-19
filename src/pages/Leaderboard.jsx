@@ -511,6 +511,7 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
               <StatTable title="Correct Outcomes" icon="✅" rows={statRows} valueKey="correctResults" format={v => v} note="W / D / L right" />
               <StatTable title="Closest Scorer" icon="📏" rows={statRows} valueKey="avgGoalDiff" format={v => v.toFixed(2)} ascending note="Avg goal diff (lower = better)" />
               <StatTable title="Group Stage Pts" icon="⚽" rows={groupRows} valueKey="matchPts" format={v => v} />
+              <StatTable title="Group Top-3 Pts" icon="🥇" rows={PLAYERS.map(name => ({ name, groupPts: lbMap[name]?.groupPts ?? 0 }))} valueKey="groupPts" format={v => v} note="5 pts per correct 1st/2nd/3rd" />
               <StatTable title="KO Bracket Pts" icon="🔮" rows={koRows} valueKey="koPts" format={v => v} note="R32 + R16 + QF + SF/Final" />
             </div>
           );
