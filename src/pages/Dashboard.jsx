@@ -388,6 +388,16 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
     }
   }
 
+  // Clinch events
+  const [clinchEvents, setClinchEvents] = useState([]);
+  useEffect(() => {
+    supabase
+      .from("clinch_events")
+      .select("group_id, team, position, detected_at")
+      .order("detected_at", { ascending: false })
+      .then(({ data }) => setClinchEvents(data || []));
+  }, []);
+
   // Which results tile is open: null | 'results' | 'standings'
   const [resultsTile, setResultsTile] = useState(null);
   function toggleResultsTile(key) { setResultsTile(prev => prev === key ? null : key); }
@@ -422,6 +432,28 @@ export default function Dashboard({ player, lastLogin, leaderboard, leaderboardL
                 onClick={() => onMarkRead(m.id)}>Dismiss</button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Clinch feed */}
+      {clinchEvents.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-label">🏅 Clinched Qualifications</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {clinchEvents.map((e, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <span style={{ fontWeight: 700, color: e.position === 1 ? "#f0c030" : "var(--text-main)" }}>
+                  {e.position === 1 ? "🥇" : "🥈"} {e.team}
+                </span>
+                <span style={{ color: "var(--text-dark)" }}>
+                  clinched {e.position === 1 ? "1st" : "2nd"} in Group {e.group_id}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-dark)" }}>
+                  {new Date(e.detected_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
