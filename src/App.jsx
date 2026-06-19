@@ -1194,17 +1194,31 @@ export default function App() {
                   else if (as > hs) { stats[m.away].pts += 3; }
                   else              { stats[m.home].pts++; stats[m.away].pts++; }
                 });
-                const totalGames = 3; // each team plays 3 games in a 4-team group
+                const totalGames = 3;
+
+                // Did team t beat rival in their H2H match (already played)?
+                function h2hWon(t, rival) {
+                  const m = matches.find(x => (x.home === t && x.away === rival) || (x.home === rival && x.away === t));
+                  if (!m) return false;
+                  const r = actualMatches[m.id];
+                  if (!r || r.home_score == null) return false;
+                  const hs = +r.home_score, as = +r.away_score;
+                  return m.home === t ? hs > as : as > hs;
+                }
+
                 const clinched = {};
                 teams.forEach(t => {
                   const myPts = stats[t].pts;
                   const rivals = teams.filter(r => r !== t);
-                  const rivalMaxPts = rivals.map(r => stats[r].pts + 3 * (totalGames - stats[r].played));
-                  if (rivals.every(r => myPts > stats[r].pts + 3 * (totalGames - stats[r].played))) {
-                    clinched[t] = 1;
-                  } else if (rivalMaxPts.filter(mp => mp >= myPts).length <= 1) {
-                    clinched[t] = 2;
-                  }
+                  // Rivals that could still reach team's points
+                  const canCatch = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) >= myPts);
+                  // Clinch 1st: no rival can exceed our pts, OR every rival that could tie us lost H2H to us
+                  const clinch1 = rivals.every(r => stats[r].pts + 3 * (totalGames - stats[r].played) < myPts)
+                    || (canCatch.every(r => h2hWon(t, r)));
+                  // Clinch 2nd: at most 1 rival can still reach our pts (and we haven't clinched 1st)
+                  const clinch2 = !clinch1 && canCatch.length <= 1;
+                  if (clinch1) clinched[t] = 1;
+                  else if (clinch2) clinched[t] = 2;
                 });
                 return clinched;
               }
