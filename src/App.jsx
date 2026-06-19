@@ -1209,15 +1209,21 @@ export default function App() {
                 const clinched = {};
                 teams.forEach(t => {
                   const myPts = stats[t].pts;
+                  const myMaxPts = myPts + 3 * (totalGames - stats[t].played);
                   const rivals = teams.filter(r => r !== t);
-                  // Rivals that could still reach team's points
+                  // Rivals that can end up with more points than team's current total
+                  const canExceed = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) > myPts);
+                  // Rivals that can exactly tie team's current points (H2H tiebreaker applies only here)
+                  const canTie    = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) === myPts);
+                  // Clinch 1st: no rival can exceed our pts, AND every rival that could tie lost H2H
+                  // (H2H only valid as clincher when team has no games left — otherwise their pts may rise)
+                  const teamDone = stats[t].played === totalGames;
+                  const clinch1 = canExceed.length === 0 &&
+                    (canTie.length === 0 || (teamDone && canTie.every(r => h2hWon(t, r))));
+                  // Clinch 2nd: guaranteed top-2 (at most 1 rival can still match/exceed pts)
+                  //             AND 1st is no longer possible for this team
                   const canCatch = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) >= myPts);
-                  // Clinch 1st: no rival can exceed our pts, OR every rival that could tie us lost H2H to us
-                  const clinch1 = rivals.every(r => stats[r].pts + 3 * (totalGames - stats[r].played) < myPts)
-                    || (canCatch.every(r => h2hWon(t, r)));
-                  // Clinch 2nd: guaranteed top-2 AND 1st is no longer possible
-                  const maxMyPts = myPts + 3 * (totalGames - stats[t].played);
-                  const firstStillPossible = rivals.every(r => maxMyPts >= stats[r].pts);
+                  const firstStillPossible = rivals.every(r => myMaxPts >= stats[r].pts);
                   const clinch2 = !clinch1 && canCatch.length <= 1 && !firstStillPossible;
                   if (clinch1) clinched[t] = 1;
                   else if (clinch2) clinched[t] = 2;
