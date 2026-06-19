@@ -207,17 +207,10 @@ const newEvents = detected.filter(
   e => !alreadyStored.has(`${e.group_id}|${e.team}|${e.position}`)
 );
 
-if (newEvents.length === 0) {
-  console.log("All clinches already recorded:", detected.map(e => `${e.team} (${e.position === 1 ? "1st" : "2nd"}, Grp ${e.group_id})`).join(", "));
-  process.exit(0);
-}
-
-// ── Save clinch events ─────────────────────────────────────────────────────
-const { error: insertErr } = await supabase.from("clinch_events").insert(newEvents);
-if (insertErr) { console.error("insert error:", insertErr); process.exit(1); }
+// ── Always propagate ALL clinches to actual tables ────────────────────────
+// (newEvents only gates the clinch_events feed insert, not the data sync)
 
 // ── Update actual_group_rankings ───────────────────────────────────────────
-// Fetch current rankings first so we only overwrite empty slots
 const { data: rankingRows } = await supabase.from("actual_group_rankings").select("*");
 const rankings = {};
 (rankingRows || []).forEach(r => {
@@ -226,7 +219,7 @@ const rankings = {};
 });
 
 const rankingUpdates = [];
-for (const e of newEvents) {
+for (const e of detected) {
   const cur = rankings[e.group_id] || { first: "", second: "", third: "" };
   const key  = e.position === 1 ? "first" : "second";
   if (!cur[key]) {
@@ -243,7 +236,8 @@ if (rankingUpdates.length) {
   const { error: rErr } = await supabase
     .from("actual_group_rankings")
     .upsert(rankingUpdates, { onConflict: "group_id" });
-  if (rErr) console.error("ranking update error:", rErr);
+  if (rErr) { console.error("ranking update error:", rErr); process.exit(1); }
+  else console.log("Group rankings updated:", rankingUpdates.map(r => `Group ${r.group_id}`).join(", "));
 }
 
 // ── Update actual_knockout R32 bracket ────────────────────────────────────
@@ -274,7 +268,7 @@ const { data: koRow } = await supabase
 
 const r32Teams = (koRow?.teams || Array(32).fill("")).slice();
 
-for (const e of newEvents) {
+for (const e of detected) {
   const r32Type = e.position === 1 ? "W" : "R";
   R32_MATCHES.forEach((m, i) => {
     [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
@@ -287,10 +281,19 @@ for (const e of newEvents) {
 const { error: koErr } = await supabase
   .from("actual_knockout")
   .upsert([{ round: "R32", teams: r32Teams }], { onConflict: "round" });
-if (koErr) console.error("R32 update error:", koErr);
+if (koErr) { console.error("R32 update error:", koErr); process.exit(1); }
+else console.log("R32 bracket updated.");
 
-// ── Summary ────────────────────────────────────────────────────────────────
-console.log("New clinches recorded:");
+// ── Insert only truly new clinch_events ───────────────────────────────────
+if (newEvents.length === 0) {
+  console.log("No new clinch events to record (data sync complete).");
+  process.exit(0);
+}
+
+const { error: insertErr } = await supabase.from("clinch_events").insert(newEvents);
+if (insertErr) { console.error("clinch_events insert error:", insertErr); process.exit(1); }
+
+console.log("New clinch events recorded:");
 for (const e of newEvents) {
   console.log(`  Group ${e.group_id}: ${e.team} clinched ${e.position === 1 ? "1st" : "2nd"} place`);
 }
