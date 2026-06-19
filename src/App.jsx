@@ -1280,6 +1280,25 @@ export default function App() {
                           );
                           setActualR32(r32Updates);
                         }
+                        // Also update ko_fixtures for resolved R32 matches
+                        const fixtureRows = [];
+                        R32_MATCHES.forEach((m, i) => {
+                          const resolve = slot => {
+                            if (slot.type === "W") return newGroupTopThree[slot.grp]?.first || "";
+                            if (slot.type === "R") return newGroupTopThree[slot.grp]?.second || "";
+                            return "";
+                          };
+                          const home = resolve(m.home), away = resolve(m.away);
+                          if (home || away) fixtureRows.push({ round: "R32", game_index: i, home_team: home, away_team: away });
+                        });
+                        if (fixtureRows.length) {
+                          await supabase.from("ko_fixtures").upsert(fixtureRows, { onConflict: "round,game_index" });
+                          setKoFixtures(prev => {
+                            const r32 = [...(prev.R32 || Array(16).fill(null))];
+                            fixtureRows.forEach(f => { r32[f.game_index] = { home: f.home_team, away: f.away_team }; });
+                            return { ...prev, R32: r32 };
+                          });
+                        }
                       }}
                     >
                       ✓ Auto-fill clinched

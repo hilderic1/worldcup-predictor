@@ -282,7 +282,37 @@ const { error: koErr } = await supabase
   .from("actual_knockout")
   .upsert([{ round: "R32", teams: r32Teams }], { onConflict: "round" });
 if (koErr) { console.error("R32 update error:", koErr); process.exit(1); }
-else console.log("R32 bracket updated.");
+
+// ── Update ko_fixtures for R32 ─────────────────────────────────────────────
+// Resolve the bracket using all currently known group rankings
+const { data: allRankingRows } = await supabase.from("actual_group_rankings").select("*");
+const allRankings = {};
+(allRankingRows || []).forEach(r => {
+  if (Array.isArray(r.ranking))
+    allRankings[r.group_id] = { W: r.ranking[0] || "", R: r.ranking[1] || "" };
+});
+
+function resolveSlot(slot) {
+  if (slot.type === "W" || slot.type === "R") return allRankings[slot.grp]?.[slot.type] || "";
+  return ""; // 3rd-place slots need full group completion — skip
+}
+
+const fixtureRows = [];
+R32_MATCHES.forEach((m, i) => {
+  const home = resolveSlot(m.home);
+  const away = resolveSlot(m.away);
+  if (home || away) {
+    fixtureRows.push({ round: "R32", game_index: i, home_team: home, away_team: away });
+  }
+});
+
+if (fixtureRows.length) {
+  const { error: fixErr } = await supabase
+    .from("ko_fixtures")
+    .upsert(fixtureRows, { onConflict: "round,game_index" });
+  if (fixErr) { console.error("ko_fixtures update error:", fixErr); process.exit(1); }
+  else console.log(`R32 fixtures updated (${fixtureRows.length} matches).`);
+}
 
 // ── Insert only truly new clinch_events ───────────────────────────────────
 if (newEvents.length === 0) {
