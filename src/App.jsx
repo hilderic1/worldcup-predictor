@@ -1215,8 +1215,10 @@ export default function App() {
                   // Clinch 1st: no rival can exceed our pts, OR every rival that could tie us lost H2H to us
                   const clinch1 = rivals.every(r => stats[r].pts + 3 * (totalGames - stats[r].played) < myPts)
                     || (canCatch.every(r => h2hWon(t, r)));
-                  // Clinch 2nd: at most 1 rival can still reach our pts (and we haven't clinched 1st)
-                  const clinch2 = !clinch1 && canCatch.length <= 1;
+                  // Clinch 2nd: guaranteed top-2 AND 1st is no longer possible
+                  const maxMyPts = myPts + 3 * (totalGames - stats[t].played);
+                  const firstStillPossible = rivals.every(r => maxMyPts >= stats[r].pts);
+                  const clinch2 = !clinch1 && canCatch.length <= 1 && !firstStillPossible;
                   if (clinch1) clinched[t] = 1;
                   else if (clinch2) clinched[t] = 2;
                 });
