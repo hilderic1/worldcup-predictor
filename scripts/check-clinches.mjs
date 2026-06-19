@@ -160,10 +160,9 @@ function computeClinches(actualMatches) {
       const rivals   = teams.filter(r => r !== t);
       const canExceed = rivals.filter(r => stats[r].pts + 3 * (TOTAL_GAMES - stats[r].played) > myPts);
       const canTie    = rivals.filter(r => stats[r].pts + 3 * (TOTAL_GAMES - stats[r].played) === myPts);
-      const teamDone  = stats[t].played === TOTAL_GAMES;
 
       const clinch1 = canExceed.length === 0 &&
-        (canTie.length === 0 || (teamDone && canTie.every(r => h2hWon(t, r))));
+        (canTie.length === 0 || canTie.every(r => h2hWon(t, r)));
 
       const canCatch = rivals.filter(r => stats[r].pts + 3 * (TOTAL_GAMES - stats[r].played) >= myPts);
       const firstStillPossible = rivals.every(r => myMaxPts >= stats[r].pts);

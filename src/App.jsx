@@ -1215,11 +1215,11 @@ export default function App() {
                   const canExceed = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) > myPts);
                   // Rivals that can exactly tie team's current points (H2H tiebreaker applies only here)
                   const canTie    = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) === myPts);
-                  // Clinch 1st: no rival can exceed our pts, AND every rival that could tie lost H2H
-                  // (H2H only valid as clincher when team has no games left — otherwise their pts may rise)
-                  const teamDone = stats[t].played === totalGames;
+                  // Clinch 1st: no rival can exceed current pts, AND every rival that could tie has lost H2H.
+                  // teamDone guard removed: a team's pts can only stay the same or rise, so beating all
+                  // potential tiers H2H is sufficient even with games remaining.
                   const clinch1 = canExceed.length === 0 &&
-                    (canTie.length === 0 || (teamDone && canTie.every(r => h2hWon(t, r))));
+                    (canTie.length === 0 || canTie.every(r => h2hWon(t, r)));
                   // Clinch 2nd: guaranteed top-2 (at most 1 rival can still match/exceed pts)
                   //             AND 1st is no longer possible for this team
                   const canCatch = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) >= myPts);
