@@ -590,6 +590,11 @@ export default function App() {
     return GROUP_MATCHES.filter(m => m.group === grp).every(matchStarted);
   }
 
+  // Has at least one match of a group started? (enough to enter clinched positions)
+  function groupStarted(grp) {
+    return GROUP_MATCHES.filter(m => m.group === grp).some(matchStarted);
+  }
+
   async function enableTestMode() {
     await supabase.from("app_settings")
       .upsert({ key: "test_phase", value: "true" }, { onConflict: "key" });
@@ -1177,7 +1182,7 @@ export default function App() {
                 <div className="group-grid">
                   {Object.entries(GROUPS).map(([grp, teams]) => {
                     const v = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
-                    const canEdit = testPhase || groupComplete(grp);
+                    const canEdit = testPhase || groupStarted(grp);
                     return (
                       <div key={grp} className="group-box" style={{ opacity: canEdit ? 1 : 0.45 }}>
                         <div className="group-box-title">Group {grp}{!canEdit && " ⏳"}</div>
@@ -1233,7 +1238,7 @@ export default function App() {
                   { id: "QF",  label: "Quarter-Finalists (8 teams)", arr: actualQF, setArr: setActualQF, size: 8 },
                 ].map(({ id, label, arr, setArr, size }) => {
                   const r = KO_ROUNDS.find(r => r.id === id);
-                  const canEdit = testPhase || (r && roundStarted(r));
+                  const canEdit = testPhase || (id === "R32" ? isPast(GLOBAL_DEADLINE) : (r && roundStarted(r)));
                   return (
                     <div key={id} className="card" style={{ opacity: canEdit ? 1 : 0.45 }}>
                       <div className="card-label">
