@@ -1176,38 +1176,138 @@ export default function App() {
             })()}
 
             {/* GROUP TOP 3 */}
-            {adminTab === "groups" && (
-              <div className="card">
-                <div className="card-label">Actual 1st, 2nd and 3rd per group</div>
-                <div className="group-grid">
-                  {Object.entries(GROUPS).map(([grp, teams]) => {
-                    const v = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
-                    const canEdit = testPhase || groupStarted(grp);
-                    return (
-                      <div key={grp} className="group-box" style={{ opacity: canEdit ? 1 : 0.45 }}>
-                        <div className="group-box-title">Group {grp}{!canEdit && " ⏳"}</div>
-                        {["first", "second", "third"].map((rank, i) => (
-                          <div key={rank} className="rank-row">
-                            <div className="rank-num">{i + 1}</div>
-                            <select
-                              className="rank-sel"
-                              disabled={!canEdit}
-                              value={v[rank] || ""}
-                              onChange={e => setActualGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: e.target.value } }))}
-                            >
-                              <option value="">— pick —</option>
-                              {[...teams].sort((a, b) => a.localeCompare(b)).map(t => (
-                                <option key={t} value={t}>{f(t)} {t}</option>
-                              ))}
-                            </select>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })}
+            {adminTab === "groups" && (() => {
+              // ── Clinch detection ──
+              // For each group, compute current standings from entered actual results.
+              // A team clinches 1st  when pts > every rival's maxPossible.
+              // A team clinches 2nd  when at most 1 rival can still reach their pts.
+              function computeClinch(grp, teams) {
+                const matches = GROUP_MATCHES.filter(m => m.group === grp);
+                const stats = {};
+                teams.forEach(t => { stats[t] = { pts: 0, played: 0 }; });
+                matches.forEach(m => {
+                  const r = actualMatches[m.id];
+                  if (r == null || r.home_score == null) return;
+                  const hs = +r.home_score, as = +r.away_score;
+                  stats[m.home].played++; stats[m.away].played++;
+                  if (hs > as)      { stats[m.home].pts += 3; }
+                  else if (as > hs) { stats[m.away].pts += 3; }
+                  else              { stats[m.home].pts++; stats[m.away].pts++; }
+                });
+                const totalGames = 3; // each team plays 3 games in a 4-team group
+                const clinched = {};
+                teams.forEach(t => {
+                  const myPts = stats[t].pts;
+                  const rivals = teams.filter(r => r !== t);
+                  const rivalMaxPts = rivals.map(r => stats[r].pts + 3 * (totalGames - stats[r].played));
+                  if (rivals.every(r => myPts > stats[r].pts + 3 * (totalGames - stats[r].played))) {
+                    clinched[t] = 1;
+                  } else if (rivalMaxPts.filter(mp => mp >= myPts).length <= 1) {
+                    clinched[t] = 2;
+                  }
+                });
+                return clinched;
+              }
+
+              return (
+                <div className="card">
+                  <div className="card-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Actual 1st, 2nd and 3rd per group</span>
+                    <button
+                      className="btn-sm"
+                      onClick={() => {
+                        const groupUpdates = {};
+                        const r32Updates = [...actualR32];
+
+                        Object.entries(GROUPS).forEach(([grp, teams]) => {
+                          const clinched = computeClinch(grp, teams);
+                          const c1 = teams.find(t => clinched[t] === 1);
+                          const c2 = teams.find(t => clinched[t] === 2);
+                          const current = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
+
+                          if ((c1 && !current.first) || (c2 && !current.second)) {
+                            groupUpdates[grp] = {
+                              ...current,
+                              ...(c1 && !current.first  ? { first:  c1 } : {}),
+                              ...(c2 && !current.second ? { second: c2 } : {}),
+                            };
+                          }
+
+                          // Propagate winner/runner-up to matching R32 slots
+                          R32_MATCHES.forEach((m, i) => {
+                            [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
+                              if (slot.grp !== grp) return;
+                              if (slot.type === "W" && c1 && !r32Updates[idx]) r32Updates[idx] = c1;
+                              if (slot.type === "R" && c2 && !r32Updates[idx]) r32Updates[idx] = c2;
+                            });
+                          });
+                        });
+
+                        if (Object.keys(groupUpdates).length)
+                          setActualGroupTopThree(prev => ({ ...prev, ...groupUpdates }));
+                        if (r32Updates.some((t, i) => t !== actualR32[i]))
+                          setActualR32(r32Updates);
+                      }}
+                    >
+                      ✓ Auto-fill clinched
+                    </button>
+                  </div>
+                  <div className="group-grid">
+                    {Object.entries(GROUPS).map(([grp, teams]) => {
+                      const v = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
+                      const canEdit = testPhase || groupStarted(grp);
+                      const clinched = canEdit ? computeClinch(grp, teams) : {};
+                      return (
+                        <div key={grp} className="group-box" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                          <div className="group-box-title">Group {grp}{!canEdit && " ⏳"}</div>
+                          {["first", "second", "third"].map((rank, i) => {
+                            const pos = i + 1;
+                            const clinchedTeam = teams.find(t => clinched[t] === pos);
+                            return (
+                              <div key={rank} className="rank-row">
+                                <div className="rank-num">{pos}</div>
+                                <select
+                                  className="rank-sel"
+                                  disabled={!canEdit}
+                                  value={v[rank] || ""}
+                                  onChange={e => {
+                                    const team = e.target.value;
+                                    setActualGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: team } }));
+                                    // Sync to R32: W = first (pos 1), R = second (pos 2)
+                                    const r32Type = rank === "first" ? "W" : rank === "second" ? "R" : null;
+                                    if (r32Type && team) {
+                                      setActualR32(prev => {
+                                        const next = [...prev];
+                                        R32_MATCHES.forEach((m, i) => {
+                                          [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
+                                            if (slot.grp === grp && slot.type === r32Type) next[idx] = team;
+                                          });
+                                        });
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <option value="">— pick —</option>
+                                  {[...teams].sort((a, b) => a.localeCompare(b)).map(t => (
+                                    <option key={t} value={t}>{f(t)} {t}</option>
+                                  ))}
+                                </select>
+                                {clinchedTeam && !v[rank] && (
+                                  <span style={{ fontSize: 10, color: "#4caf80", marginLeft: 4, whiteSpace: "nowrap" }}>
+                                    ✓ {clinchedTeam}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* KO ACTUAL SCORES */}
             {adminTab === "ko_results" && KO_ROUNDS.map(r => {
