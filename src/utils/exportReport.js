@@ -308,6 +308,17 @@ export async function exportComparison() {
     });
   }
 
+  // Draw a medium white bottom border across all cells of the last-added row
+  // (used to separate groups in the Top-3 section)
+  function addGroupSeparator() {
+    const row = ws.getRow(rowNum);
+    const sep = { style: "medium", color: { argb: "FF2A4070" } };
+    for (let c = 1; c <= totalCols; c++) {
+      const cell = row.getCell(c);
+      cell.border = { ...cell.border, bottom: sep };
+    }
+  }
+
   function applyPlayerBottomBorders(row) {
     PLAYERS.forEach((_, pi) => {
       const predCell = row.getCell(FIXED + 1 + pi * 2);
@@ -476,10 +487,11 @@ export async function exportComparison() {
   }
 
   groupKeys.forEach((grp, gi) => {
+    const isLastGroup = gi === groupKeys.length - 1;
     ["1st", "2nd", "3rd"].forEach((pos, ri) => {
       const key = ["first", "second", "third"][ri];
       const actGrp = actualGroups[grp];
-      const isLastRow = gi === groupKeys.length - 1 && ri === 2;
+      const isLastRow = isLastGroup && ri === 2;
       addDataRow(
         [`Group ${grp}`, pos, actGrp?.[key] || "", "", "", ""],
         name => {
@@ -490,6 +502,8 @@ export async function exportComparison() {
         },
         isLastRow,
       );
+      // Draw a separator line after each group's 3rd row (except the last group)
+      if (ri === 2 && !isLastGroup) addGroupSeparator();
     });
   });
 
