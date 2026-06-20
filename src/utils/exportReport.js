@@ -518,19 +518,20 @@ export async function exportComparison() {
     { label: "Quarter-Finals — 8 teams (20 pts each)", key: "qf", round: "QF", ptsPer: 20 },
   ].forEach(({ label, key, round, ptsPer }) => {
     addSubHeader([label, "Actual", "", "", "", ""]);
-    const actualTeams = [...(actualKO[round] || [])].filter(Boolean).sort();
+    const actualSet    = new Set((actualKO[round] || []).filter(Boolean));
+    const actualTeams  = [...actualSet].sort();
     const playerSorted = Object.fromEntries(PLAYERS.map(n => [n, (byPlayer[n][key] || []).filter(Boolean).sort()]));
-    const sectionPts   = Object.fromEntries(PLAYERS.map(n => [n, scoreKOQualifiers(byPlayer[n][key], actualKO[round], ptsPer)]));
-    PLAYERS.forEach(name => { totals[name] += sectionPts[name] || 0; });
     const maxLen = Math.max(actualTeams.length, ...PLAYERS.map(n => playerSorted[n].length), 1);
 
     for (let i = 0; i < maxLen; i++) {
       addDataRow(
         [`#${i + 1}`, actualTeams[i] || "", "", "", "", ""],
-        name => ({
-          pred: playerSorted[name][i] || "",
-          pts: i === maxLen - 1 ? sectionPts[name] : null,
-        }),
+        name => {
+          const team = playerSorted[name][i] || "";
+          const pts = team && actualSet.size > 0 && actualSet.has(team) ? ptsPer : null;
+          if (typeof pts === "number") totals[name] += pts;
+          return { pred: team, pts };
+        },
         i === maxLen - 1,
       );
     }
