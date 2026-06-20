@@ -1,6 +1,7 @@
 // xlsx is loaded lazily (only when an export is triggered) to keep initial bundle small
-const getXLSX = () => import("xlsx").then(m => m);
-import { GROUPS, GROUP_MATCHES, KO_ROUNDS, FINAL_RANKS, PLAYERS } from "../constants";
+const getXLSX  = () => import("xlsx").then(m => m);
+const getExcel = () => import("exceljs").then(m => m.default ?? m);
+import { GROUPS, GROUP_MATCHES, KO_ROUNDS, FINAL_RANKS, PLAYERS, PLAYER_COLORS } from "../constants";
 import { supabase } from "../supabase";
 import { scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking } from "../utils";
 
@@ -202,9 +203,9 @@ export async function exportMyPicks(playerName) {
   XLSX.writeFile(wb, `WC2026_Picks_${playerName}.xlsx`);
 }
 
-/** All players: one sheet comparing all players side by side */
+/** All players: one sheet comparing all players side by side (styled via ExcelJS) */
 export async function exportComparison() {
-  const XLSX = await getXLSX();
+  const ExcelJS = await getExcel();
   const [{ byPlayer, fixtures }, ra, rg, rk, rs] = await Promise.all([
     fetchAllPlayerPreds(),
     supabase.from("actual_results").select("*"),
@@ -213,7 +214,6 @@ export async function exportComparison() {
     supabase.from("ko_actual_scores").select("*"),
   ]);
 
-  // Build actuals lookup
   const actualMatches = {};
   (ra.data || []).forEach(r => (actualMatches[r.match_id] = r));
   const actualGroups = {};
@@ -231,141 +231,370 @@ export async function exportComparison() {
 
   const startedRounds = KO_ROUNDS.filter(r => r.firstKickoff && new Date() >= new Date(r.firstKickoff));
 
-  // Pre-compute running totals per player (for summary row)
+  // ── ExcelJS helpers ────────────────────────────────────────────────────────
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "WC2026 Predictor";
+  const ws = wb.addWorksheet("All Picks Comparison", { views: [{ state: "frozen", ySplit: 3 }] });
+
+  // Fixed columns: Group/Match/Date/Home/Away/Actual (6), then 2 per player
+  const FIXED = 6;
+  const totalCols = FIXED + PLAYERS.length * 2;
+
+  // Column widths
+  ws.getColumn(1).width = 9;   // group
+  ws.getColumn(2).width = 7;   // match id
+  ws.getColumn(3).width = 14;  // date+time
+  ws.getColumn(4).width = 18;  // home
+  ws.getColumn(5).width = 18;  // away
+  ws.getColumn(6).width = 9;   // actual
+  PLAYERS.forEach((_, pi) => {
+    ws.getColumn(FIXED + 1 + pi * 2).width = 12; // pred
+    ws.getColumn(FIXED + 2 + pi * 2).width = 5;  // pts
+  });
+
+  // hex "#rrggbb" → "FFrrggbb" ARGB
+  const argb = hex => "FF" + hex.replace("#", "");
+
+  // Palette
+  const C = {
+    darkBg:    "FF0A1628",
+    midBg:     "FF0E1E38",
+    lightBg:   "FF1A2A48",
+    gold:      "FFF0C030",
+    actualBg:  "FF1C3050",
+    altRow:    "FF0D1B30",
+    white:     "FFFFFFFF",
+    muted:     "FF8899AA",
+    ptsCol:    "FF0B1525",
+    sectionBg: "FF162240",
+    totBg:     "FF0A1628",
+  };
+
+  // Border presets
+  const playerLeftBorder  = { left:  { style: "medium", color: { argb: C.gold } } };
+  const playerRightBorder = { right: { style: "medium", color: { argb: C.gold } } };
+  const thinGray = { style: "thin", color: { argb: "FF1E3050" } };
+
+  function styleCell(cell, opts = {}) {
+    const { bg, fg = C.white, bold = false, italic = false, size = 10,
+            hAlign = "left", vAlign = "middle", wrapText = false,
+            borderLeft = false, borderRight = false, borderTop = false, borderBottom = false } = opts;
+    if (bg) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+    cell.font = { bold, italic, size, color: { argb: fg }, name: "Calibri" };
+    cell.alignment = { horizontal: hAlign, vertical: vAlign, wrapText };
+    const b = {};
+    if (borderLeft)   b.left   = typeof borderLeft   === "object" ? borderLeft   : { style: "thin", color: { argb: C.gold } };
+    if (borderRight)  b.right  = typeof borderRight  === "object" ? borderRight  : { style: "thin", color: { argb: C.gold } };
+    if (borderTop)    b.top    = typeof borderTop    === "object" ? borderTop    : thinGray;
+    if (borderBottom) b.bottom = typeof borderBottom === "object" ? borderBottom : thinGray;
+    if (Object.keys(b).length) cell.border = b;
+  }
+
+  // Style all cells in a row range
+  function styleRow(row, colStart, colEnd, opts) {
+    for (let c = colStart; c <= colEnd; c++) styleCell(row.getCell(c), opts);
+  }
+
+  // Apply player column borders for every data row
+  function applyPlayerBorders(row, isFirstDataRow = false) {
+    PLAYERS.forEach((_, pi) => {
+      const predCol = FIXED + 1 + pi * 2;
+      const ptsCol  = FIXED + 2 + pi * 2;
+      const predCell = row.getCell(predCol);
+      const ptsCell  = row.getCell(ptsCol);
+      const top = isFirstDataRow ? { style: "medium", color: { argb: C.gold } } : thinGray;
+      predCell.border = { ...predCell.border, left: { style: "medium", color: { argb: C.gold } }, top };
+      ptsCell.border  = { ...ptsCell.border,  right: { style: "medium", color: { argb: C.gold } }, top };
+    });
+  }
+
+  function applyPlayerBottomBorders(row) {
+    PLAYERS.forEach((_, pi) => {
+      const predCell = row.getCell(FIXED + 1 + pi * 2);
+      const ptsCell  = row.getCell(FIXED + 2 + pi * 2);
+      const bottom = { style: "medium", color: { argb: C.gold } };
+      predCell.border = { ...predCell.border, left:  { style: "medium", color: { argb: C.gold } }, bottom };
+      ptsCell.border  = { ...ptsCell.border,  right: { style: "medium", color: { argb: C.gold } }, bottom };
+    });
+  }
+
+  let rowNum = 0;
+
+  // ── Title row ──────────────────────────────────────────────────────────────
+  rowNum++;
+  const titleRow = ws.getRow(rowNum);
+  titleRow.height = 22;
+  titleRow.getCell(1).value = "⚽  WC 2026 — All Players Picks & Scores";
+  styleRow(titleRow, 1, totalCols, { bg: C.darkBg, fg: C.gold, bold: true, size: 13, hAlign: "center" });
+  ws.mergeCells(rowNum, 1, rowNum, totalCols);
+
+  // ── Total score row ────────────────────────────────────────────────────────
+  rowNum++;
+  const totalsRow = ws.getRow(rowNum);
+  totalsRow.height = 18;
   const totals = Object.fromEntries(PLAYERS.map(n => [n, 0]));
+  const totalsRowRef = rowNum; // fill values at end
 
-  // Helper: interleave [Pred, Score] columns for each player
-  const playerHeaders = PLAYERS.flatMap(name => [name, "Pts"]);
+  // ── Column header row ──────────────────────────────────────────────────────
+  rowNum++;
+  const hdrRow = ws.getRow(rowNum);
+  hdrRow.height = 28;
+  ["Group/Round", "ID", "Date & Time", "Home", "Away", "Actual"].forEach((h, i) => {
+    const cell = hdrRow.getCell(i + 1);
+    cell.value = h;
+    styleCell(cell, { bg: C.midBg, fg: C.muted, bold: true, size: 9, hAlign: "center", vAlign: "middle" });
+  });
+  PLAYERS.forEach((name, pi) => {
+    const color = argb(PLAYER_COLORS[name] || "#8899AA");
+    const predCell = hdrRow.getCell(FIXED + 1 + pi * 2);
+    const ptsCell  = hdrRow.getCell(FIXED + 2 + pi * 2);
+    predCell.value = name;
+    ptsCell.value  = "Pts";
+    styleCell(predCell, { bg: color, fg: C.darkBg, bold: true, size: 10, hAlign: "center", vAlign: "middle",
+      borderLeft: { style: "medium", color: { argb: C.gold } } });
+    styleCell(ptsCell,  { bg: color, fg: C.darkBg, bold: true, size: 9,  hAlign: "center", vAlign: "middle",
+      borderRight: { style: "medium", color: { argb: C.gold } } });
+  });
 
-  const rows = [];
+  // ── Helper: add a section title row ───────────────────────────────────────
+  function addSection(title) {
+    rowNum++;
+    const r = ws.getRow(rowNum);
+    r.height = 16;
+    r.getCell(1).value = title;
+    styleRow(r, 1, totalCols, { bg: C.sectionBg, fg: C.gold, bold: true, size: 10 });
+    ws.mergeCells(rowNum, 1, rowNum, totalCols);
+    return r;
+  }
 
-  // ── TOTALS summary (filled in at the end, placeholder for now) ──
-  const totalsRowIdx = 1; // row index 1 (after title row)
-  rows.push(["WC 2026 — ALL PLAYERS COMPARISON"]);
-  rows.push(["TOTAL SCORE", "", "", "", "", "", ...PLAYERS.flatMap(name => [name, ""])]);  // placeholder
+  // ── Helper: add a sub-header row (for KO qualifier sections) ──────────────
+  function addSubHeader(labels) {
+    rowNum++;
+    const r = ws.getRow(rowNum);
+    r.height = 14;
+    labels.forEach((v, i) => {
+      const cell = r.getCell(i + 1);
+      cell.value = v;
+      styleCell(cell, { bg: C.lightBg, fg: C.muted, bold: true, size: 9, hAlign: "center" });
+    });
+    PLAYERS.forEach((name, pi) => {
+      const color = argb(PLAYER_COLORS[name] || "#8899AA");
+      const predCell = r.getCell(FIXED + 1 + pi * 2);
+      const ptsCell  = r.getCell(FIXED + 2 + pi * 2);
+      predCell.value = name;
+      ptsCell.value  = "Pts";
+      styleCell(predCell, { bg: color, fg: C.darkBg, bold: true, size: 9, hAlign: "center",
+        borderLeft: { style: "medium", color: { argb: C.gold } } });
+      styleCell(ptsCell,  { bg: color, fg: C.darkBg, bold: true, size: 9, hAlign: "center",
+        borderRight: { style: "medium", color: { argb: C.gold } } });
+    });
+    return r;
+  }
 
-  // ── Group match scores ──
-  rows.push([]);
-  rows.push(["GROUP STAGE — MATCH SCORE PREDICTIONS"]);
-  rows.push(["Group", "Match", "Date & Time", "Home", "Away", "Actual", ...playerHeaders]);
-  MATCHES_BY_TIME.forEach(m => {
+  // ── Helper: add a data row ─────────────────────────────────────────────────
+  let dataRowCount = 0;
+  function addDataRow(fixedValues, playerFn, isLast = false) {
+    rowNum++;
+    dataRowCount++;
+    const r = ws.getRow(rowNum);
+    r.height = 14;
+    const even = dataRowCount % 2 === 0;
+    const baseBg = even ? C.altRow : C.midBg;
+
+    fixedValues.forEach((v, i) => {
+      const cell = r.getCell(i + 1);
+      cell.value = v;
+      const isActual = i === 5;
+      styleCell(cell, {
+        bg: isActual ? C.actualBg : baseBg,
+        fg: isActual ? C.gold : C.white,
+        bold: isActual,
+        size: 10,
+        hAlign: i >= 3 ? "left" : "center",
+        borderBottom: thinGray, borderTop: thinGray,
+      });
+    });
+
+    PLAYERS.forEach((name, pi) => {
+      const { pred, pts } = playerFn(name);
+      const predCell = r.getCell(FIXED + 1 + pi * 2);
+      const ptsCell  = r.getCell(FIXED + 2 + pi * 2);
+      predCell.value = pred || "";
+      ptsCell.value  = typeof pts === "number" && pts > 0 ? pts : "";
+      const left  = { style: "medium", color: { argb: C.gold } };
+      const right = { style: "medium", color: { argb: C.gold } };
+      const bottom = isLast ? { style: "medium", color: { argb: C.gold } } : thinGray;
+      styleCell(predCell, { bg: baseBg, fg: C.white, size: 10, hAlign: "center",
+        borderLeft: left, borderBottom: bottom, borderTop: thinGray });
+      styleCell(ptsCell,  { bg: C.ptsCol, fg: typeof pts === "number" && pts > 0 ? C.gold : C.muted,
+        bold: typeof pts === "number" && pts > 0, size: 10, hAlign: "center",
+        borderRight: right, borderBottom: bottom, borderTop: thinGray });
+    });
+
+    if (isLast) dataRowCount = 0; // reset alternation between sections
+    return r;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // GROUP STAGE — MATCH SCORES
+  // ══════════════════════════════════════════════════════════════════════════
+  addSection("GROUP STAGE — MATCH SCORE PREDICTIONS");
+  addSubHeader(["Group", "Match", "Date & Time", "Home", "Away", "Actual"]);
+
+  const matchRows = MATCHES_BY_TIME;
+  matchRows.forEach((m, idx) => {
     const act = actualMatches[m.id];
     const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
-    rows.push([
-      `Group ${m.group}`, m.id, `${m.date} ${m.time}`, m.home, m.away, actualScore,
-      ...PLAYERS.flatMap(name => {
+    addDataRow(
+      [`Grp ${m.group}`, m.id, `${m.date} ${m.time}`, m.home, m.away, actualScore],
+      name => {
         const p = byPlayer[name].matches[m.id] || {};
         const hs = p.home_score, as = p.away_score;
         const pred = (hs == null || (+hs === 10 && +as === 10)) ? "" : `${hs}-${as}`;
-        const pts = act ? scoreMatch(p, act).total : "";
+        const pts = act ? scoreMatch(p, act).total : null;
         if (typeof pts === "number") totals[name] += pts;
-        return [pred, pts === 0 ? "" : pts];
-      }),
-    ]);
+        return { pred, pts };
+      },
+      idx === matchRows.length - 1,
+    );
   });
 
-  // ── Group rankings ──
-  rows.push([]);
-  rows.push(["GROUP STAGE — TOP 3 RANKINGS"]);
-  rows.push(["Group", "Position", "Actual", ...playerHeaders]);
-  Object.keys(GROUPS).forEach(grp => {
-    ["1st", "2nd", "3rd"].forEach((pos, i) => {
-      const key = ["first", "second", "third"][i];
+  // ══════════════════════════════════════════════════════════════════════════
+  // GROUP STAGE — TOP 3 RANKINGS
+  // ══════════════════════════════════════════════════════════════════════════
+  addSection("GROUP STAGE — TOP 3 RANKINGS");
+  addSubHeader(["Group", "Position", "Actual", "", "", ""]);
+
+  const groupKeys = Object.keys(GROUPS);
+  groupKeys.forEach((grp, gi) => {
+    ["1st", "2nd", "3rd"].forEach((pos, ri) => {
+      const key = ["first", "second", "third"][ri];
       const actGrp = actualGroups[grp];
-      rows.push([
-        `Group ${grp}`, pos, actGrp?.[key] || "",
-        ...PLAYERS.flatMap(name => {
+      const isLastRow = gi === groupKeys.length - 1 && ri === 2;
+      addDataRow(
+        [`Group ${grp}`, pos, actGrp?.[key] || "", "", "", ""],
+        name => {
           const pred = byPlayer[name].groupTopThree[grp]?.[key] || "";
-          // Score the whole group top-3 on the last rank row, show on 3rd row
-          if (i < 2) return [pred, ""];
-          const pts = actGrp ? scoreGroupTopThree(byPlayer[name].groupTopThree[grp], actGrp) : "";
+          if (ri < 2) return { pred, pts: null };
+          const pts = actGrp ? scoreGroupTopThree(byPlayer[name].groupTopThree[grp], actGrp) : null;
           if (typeof pts === "number") totals[name] += pts;
-          return [pred, pts === 0 ? "" : pts];
-        }),
-      ]);
+          return { pred, pts };
+        },
+        isLastRow,
+      );
     });
   });
 
-  // ── KO qualifiers ──
-  rows.push([]);
-  rows.push(["KNOCKOUT QUALIFIER PICKS"]);
+  // ══════════════════════════════════════════════════════════════════════════
+  // KO QUALIFIER PICKS
+  // ══════════════════════════════════════════════════════════════════════════
+  addSection("KNOCKOUT QUALIFIER PICKS");
+
   [
-    { label: "Round of 32 (32 teams)", key: "r32", round: "R32", pts: 10 },
-    { label: "Round of 16 (16 teams)", key: "r16", round: "R16", pts: 15 },
-    { label: "Quarter-Finals (8 teams)", key: "qf",  round: "QF",  pts: 20 },
-  ].forEach(({ label, key, round, pts: ptsPer }) => {
+    { label: "Round of 32 — 32 teams (10 pts each)", key: "r32", round: "R32", ptsPer: 10 },
+    { label: "Round of 16 — 16 teams (15 pts each)", key: "r16", round: "R16", ptsPer: 15 },
+    { label: "Quarter-Finals — 8 teams (20 pts each)", key: "qf", round: "QF", ptsPer: 20 },
+  ].forEach(({ label, key, round, ptsPer }) => {
+    addSubHeader([label, "Actual", "", "", "", ""]);
     const actualTeams = [...(actualKO[round] || [])].filter(Boolean).sort();
-    rows.push([label, "Actual", ...playerHeaders]);
-    const maxLen = Math.max(actualTeams.length, ...PLAYERS.map(n => (byPlayer[n][key] || []).filter(Boolean).length));
     const playerSorted = Object.fromEntries(PLAYERS.map(n => [n, (byPlayer[n][key] || []).filter(Boolean).sort()]));
-    // Score row at the end of each section
-    const sectionPts = Object.fromEntries(PLAYERS.map(n => [n, scoreKOQualifiers(byPlayer[n][key], actualKO[round], ptsPer)]));
+    const sectionPts   = Object.fromEntries(PLAYERS.map(n => [n, scoreKOQualifiers(byPlayer[n][key], actualKO[round], ptsPer)]));
     PLAYERS.forEach(name => { totals[name] += sectionPts[name] || 0; });
+    const maxLen = Math.max(actualTeams.length, ...PLAYERS.map(n => playerSorted[n].length), 1);
+
     for (let i = 0; i < maxLen; i++) {
-      const isLast = i === maxLen - 1;
-      rows.push([
-        `#${i + 1}`, actualTeams[i] || "",
-        ...PLAYERS.flatMap(name => [
-          playerSorted[name][i] || "",
-          isLast ? (sectionPts[name] || "") : "",
-        ]),
-      ]);
+      addDataRow(
+        [`#${i + 1}`, actualTeams[i] || "", "", "", "", ""],
+        name => ({
+          pred: playerSorted[name][i] || "",
+          pts: i === maxLen - 1 ? sectionPts[name] : null,
+        }),
+        i === maxLen - 1,
+      );
     }
-    rows.push([]);
   });
 
-  // Final standings
-  rows.push(["FINAL STANDINGS (1st–4th)"]);
-  rows.push(["Position", "Actual", ...playerHeaders]);
+  // ══════════════════════════════════════════════════════════════════════════
+  // FINAL STANDINGS
+  // ══════════════════════════════════════════════════════════════════════════
+  addSection("FINAL STANDINGS — Semi-Finals (25 pts per team + 5 pts correct rank)");
+  addSubHeader(["Position", "Actual", "", "", "", ""]);
+
   FINAL_RANKS.forEach((pos, i) => {
     const isLast = i === FINAL_RANKS.length - 1;
     const sfPts = isLast
       ? Object.fromEntries(PLAYERS.map(n => [n, scoreSFRanking(byPlayer[n].sfRank, actualKO["SF_RANK"])]))
       : null;
     if (sfPts) PLAYERS.forEach(name => { totals[name] += sfPts[name] || 0; });
-    rows.push([
-      pos, actualKO["SF_RANK"]?.[i] || "",
-      ...PLAYERS.flatMap(name => [
-        (byPlayer[name].sfRank || [])[i] || "",
-        sfPts ? (sfPts[name] || "") : "",
-      ]),
-    ]);
+    addDataRow(
+      [pos, actualKO["SF_RANK"]?.[i] || "", "", "", "", ""],
+      name => ({
+        pred: (byPlayer[name].sfRank || [])[i] || "",
+        pts: sfPts ? sfPts[name] : null,
+      }),
+      isLast,
+    );
   });
 
-  // ── KO match scores (started rounds only) ──
+  // ══════════════════════════════════════════════════════════════════════════
+  // KO MATCH SCORES (started rounds)
+  // ══════════════════════════════════════════════════════════════════════════
   if (startedRounds.length > 0) {
-    rows.push([]);
-    rows.push(["KNOCKOUT MATCH SCORE PREDICTIONS (started rounds)"]);
-    rows.push(["Round", "Match", "Home", "Away", "Actual", ...playerHeaders]);
+    addSection("KNOCKOUT MATCH SCORE PREDICTIONS");
+    addSubHeader(["Round", "Match #", "Home", "Away", "Actual", ""]);
+
+    const koDataRows = [];
     startedRounds.forEach(r => {
       (fixtures[r.id] || []).forEach((fix, i) => {
-        if (!fix?.home) return;
-        const act = (actualKOScores[r.id] || [])[i];
-        const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
-        rows.push([
-          r.label, i + 1, fix.home, fix.away, actualScore,
-          ...PLAYERS.flatMap(name => {
-            const p = (byPlayer[name].koMatches[r.id] || [])[i] || {};
-            const pred = p.home_score != null ? `${p.home_score}-${p.away_score}` : "";
-            const pts = act ? scoreMatch(p, act).total : "";
-            if (typeof pts === "number") totals[name] += pts;
-            return [pred, pts === 0 ? "" : pts];
-          }),
-        ]);
+        if (fix?.home) koDataRows.push({ r, fix, i });
       });
+    });
+    koDataRows.forEach(({ r, fix, i }, idx) => {
+      const act = (actualKOScores[r.id] || [])[i];
+      const actualScore = act?.home_score != null ? `${act.home_score}-${act.away_score}` : "";
+      addDataRow(
+        [r.label, i + 1, fix.home, fix.away, actualScore, ""],
+        name => {
+          const p = (byPlayer[name].koMatches[r.id] || [])[i] || {};
+          const pred = p.home_score != null ? `${p.home_score}-${p.away_score}` : "";
+          const pts = act ? scoreMatch(p, act).total : null;
+          if (typeof pts === "number") totals[name] += pts;
+          return { pred, pts };
+        },
+        idx === koDataRows.length - 1,
+      );
     });
   }
 
-  // Fill in totals summary row
-  rows[totalsRowIdx] = [
-    "TOTAL SCORE", "", "", "", "", "",
-    ...PLAYERS.flatMap(name => [name, totals[name]]),
-  ];
+  // ── Fill totals row ────────────────────────────────────────────────────────
+  const tr = ws.getRow(totalsRowRef);
+  tr.height = 20;
+  tr.getCell(1).value = "TOTAL SCORE";
+  styleCell(tr.getCell(1), { bg: C.totBg, fg: C.gold, bold: true, size: 11 });
+  for (let c = 2; c <= FIXED; c++)
+    styleCell(tr.getCell(c), { bg: C.totBg });
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "All Picks Comparison");
-  const date = new Date().toISOString().split("T")[0];
-  XLSX.writeFile(wb, `WC2026_Comparison_${date}.xlsx`);
+  PLAYERS.forEach((name, pi) => {
+    const color = argb(PLAYER_COLORS[name] || "#8899AA");
+    const predCell = tr.getCell(FIXED + 1 + pi * 2);
+    const ptsCell  = tr.getCell(FIXED + 2 + pi * 2);
+    predCell.value = name;
+    ptsCell.value  = totals[name];
+    styleCell(predCell, { bg: color, fg: C.darkBg, bold: true, size: 11, hAlign: "center",
+      borderLeft: { style: "medium", color: { argb: C.gold } } });
+    styleCell(ptsCell,  { bg: color, fg: C.darkBg, bold: true, size: 13, hAlign: "center",
+      borderRight: { style: "medium", color: { argb: C.gold } } });
+  });
+
+  // ── Write file ─────────────────────────────────────────────────────────────
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `WC2026_Comparison_${new Date().toISOString().split("T")[0]}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /** Admin: download one sheet per player */
