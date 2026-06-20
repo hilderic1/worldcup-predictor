@@ -466,6 +466,15 @@ export async function exportComparison() {
   addSubHeader(["Group", "Position", "Actual", "", "", ""]);
 
   const groupKeys = Object.keys(GROUPS);
+  // Score each position independently: 5 pts if team appears anywhere in top-3,
+  // +5 bonus if predicted in the exact correct position.
+  function scorePosition(predTeam, key, actual) {
+    if (!predTeam || !actual) return null;
+    const inTop3 = [actual.first, actual.second, actual.third].includes(predTeam);
+    if (!inTop3) return null;
+    return actual[key] === predTeam ? 10 : 5;
+  }
+
   groupKeys.forEach((grp, gi) => {
     ["1st", "2nd", "3rd"].forEach((pos, ri) => {
       const key = ["first", "second", "third"][ri];
@@ -475,8 +484,7 @@ export async function exportComparison() {
         [`Group ${grp}`, pos, actGrp?.[key] || "", "", "", ""],
         name => {
           const pred = byPlayer[name].groupTopThree[grp]?.[key] || "";
-          if (ri < 2) return { pred, pts: null };
-          const pts = actGrp ? scoreGroupTopThree(byPlayer[name].groupTopThree[grp], actGrp) : null;
+          const pts = scorePosition(pred, key, actGrp);
           if (typeof pts === "number") totals[name] += pts;
           return { pred, pts };
         },
