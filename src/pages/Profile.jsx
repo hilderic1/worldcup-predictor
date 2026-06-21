@@ -39,7 +39,7 @@ export default function Profile({ player }) {
           </p>
           <button
             className="btn-save"
-            onClick={async () => { setExportingAll(true); try { await exportComparison(); } finally { setExportingAll(false); } }}
+            onClick={async () => { setExportingAll(true); try { await exportComparison(player?.name); } finally { setExportingAll(false); } }}
             disabled={exportingAll}
             style={{ width: "auto" }}
           >

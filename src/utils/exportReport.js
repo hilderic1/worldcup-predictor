@@ -3,7 +3,7 @@ const getXLSX  = () => import("xlsx").then(m => m);
 const getExcel = () => import("exceljs").then(m => m.default ?? m);
 import { GROUPS, GROUP_MATCHES, KO_ROUNDS, FINAL_RANKS, PLAYERS, PLAYER_COLORS } from "../constants";
 import { supabase } from "../supabase";
-import { scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking } from "../utils";
+import { scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking, currentOpenRound } from "../utils";
 
 function matchSortKey(m) {
   const [mo, d, yr] = m.date.split("/");
@@ -204,7 +204,7 @@ export async function exportMyPicks(playerName) {
 }
 
 /** All players: one sheet comparing all players side by side (styled via ExcelJS) */
-export async function exportComparison() {
+export async function exportComparison(viewerName = null) {
   const ExcelJS = await getExcel();
   const [{ byPlayer, fixtures }, ra, rg, rk, rs] = await Promise.all([
     fetchAllPlayerPreds(),
@@ -230,6 +230,17 @@ export async function exportComparison() {
   });
 
   const startedRounds = KO_ROUNDS.filter(r => r.firstKickoff && new Date() >= new Date(r.firstKickoff));
+
+  // Picks for a KO round are visible to all once a later round is open.
+  // Until then only the viewer's own picks are shown; others' cells are left blank.
+  const _roundOrder = ["GROUP", "R32", "R16", "QF", "SF", "FINAL", "CLOSED"];
+  const _openRound  = currentOpenRound();
+  function roundVisibleToAll(roundId) {
+    return _roundOrder.indexOf(_openRound) > _roundOrder.indexOf(roundId);
+  }
+  function canViewPlayer(name, roundId) {
+    return !viewerName || name === viewerName || roundVisibleToAll(roundId);
+  }
 
   // ── ExcelJS helpers ────────────────────────────────────────────────────────
   const wb = new ExcelJS.Workbook();
@@ -527,6 +538,7 @@ export async function exportComparison() {
       addDataRow(
         [`#${i + 1}`, actualTeams[i] || "", "", "", "", ""],
         name => {
+          if (!canViewPlayer(name, round)) return { pred: "🔒", pts: null };
           const team = playerSorted[name][i] || "";
           const pts = team && actualSet.size > 0 && actualSet.has(team) ? ptsPer : null;
           if (typeof pts === "number") totals[name] += pts;
@@ -546,15 +558,18 @@ export async function exportComparison() {
   FINAL_RANKS.forEach((pos, i) => {
     const isLast = i === FINAL_RANKS.length - 1;
     const sfPts = isLast
-      ? Object.fromEntries(PLAYERS.map(n => [n, scoreSFRanking(byPlayer[n].sfRank, actualKO["SF_RANK"])]))
+      ? Object.fromEntries(PLAYERS.map(n => [n, canViewPlayer(n, "SF") ? scoreSFRanking(byPlayer[n].sfRank, actualKO["SF_RANK"]) : 0]))
       : null;
     if (sfPts) PLAYERS.forEach(name => { totals[name] += sfPts[name] || 0; });
     addDataRow(
       [pos, actualKO["SF_RANK"]?.[i] || "", "", "", "", ""],
-      name => ({
-        pred: (byPlayer[name].sfRank || [])[i] || "",
-        pts: sfPts ? sfPts[name] : null,
-      }),
+      name => {
+        if (!canViewPlayer(name, "SF")) return { pred: "🔒", pts: null };
+        return {
+          pred: (byPlayer[name].sfRank || [])[i] || "",
+          pts: sfPts ? sfPts[name] : null,
+        };
+      },
       isLast,
     );
   });
@@ -578,6 +593,7 @@ export async function exportComparison() {
       addDataRow(
         [r.label, i + 1, fix.home, fix.away, actualScore, ""],
         name => {
+          if (!canViewPlayer(name, r.id)) return { pred: "🔒", pts: null };
           const p = (byPlayer[name].koMatches[r.id] || [])[i] || {};
           const pred = p.home_score != null ? `${p.home_score}-${p.away_score}` : "";
           const pts = act ? scoreMatch(p, act).total : null;
