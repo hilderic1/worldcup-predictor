@@ -241,32 +241,26 @@ export default function AllPredictions({
                   const rCls = rPred ? getMatchPickClass(rPred, actual) : null;
                   const lSc = actual ? scoreMatch(lPred, actual) : null;
                   const rSc = (actual && rPred) ? scoreMatch(rPred, actual) : null;
+                  const scoreBadgeStyle = { width: "auto", flexShrink: 0, padding: "5px 10px", fontSize: 15, whiteSpace: "nowrap" };
                   return (
-                    <div key={m.id} className="match-row" style={{ gridTemplateColumns: "1fr auto 1fr" }}>
+                    <div key={m.id} className="match-row" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {comparing ? (
                         <>
-                          {/* Teams row */}
-                          <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "center", gap: 6, fontSize: 12, color: "#8a9aba", marginBottom: 4 }}>
-                            <span>{f(m.home)} {m.home}</span>
-                            <span style={{ color: "var(--text-dark)" }}>vs</span>
-                            <span>{m.away} {f(m.away)}</span>
+                          <div style={{ textAlign: "center", fontSize: 12, color: "#8a9aba" }}>
+                            {f(m.home)} {m.home} <span style={{ color: "var(--text-dark)", margin: "0 4px" }}>vs</span> {m.away} {f(m.away)}
                           </div>
-                          {/* Score badges */}
-                          <div style={{ textAlign: "right" }}>
-                            <span className={`score-badge ${lCls}`} style={{ display: "inline-block", minWidth: 52, color: PLAYER_COLORS[leftPlayer] }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <span className={`score-badge ${lCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[leftPlayer] }}>
                               {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
                             </span>
-                          </div>
-                          <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-dark)", padding: "0 6px" }}>
-                            {actual ? `${actual.home_score}–${actual.away_score}` : "—"}
-                          </div>
-                          <div style={{ textAlign: "left" }}>
-                            <span className={`score-badge ${rCls}`} style={{ display: "inline-block", minWidth: 52, color: PLAYER_COLORS[rightPlayer] }}>
+                            <span style={{ fontSize: 11, color: "var(--text-dark)", flexShrink: 0 }}>
+                              {actual ? `${actual.home_score}–${actual.away_score}` : "—"}
+                            </span>
+                            <span className={`score-badge ${rCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[rightPlayer] }}>
                               {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
                             </span>
                           </div>
-                          {/* Pts + meta row */}
-                          <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)", marginTop: 4 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
                             <span style={{ color: PLAYER_COLORS[leftPlayer] }}>{lSc !== null ? `${lSc.total}pts` : "—"}</span>
                             <span>Grp {m.group} · {m.date}</span>
                             <span style={{ color: PLAYER_COLORS[rightPlayer] }}>{rSc !== null ? `${rSc.total}pts` : "—"}</span>
@@ -274,12 +268,14 @@ export default function AllPredictions({
                         </>
                       ) : (
                         <>
-                          <div className="team-l">{f(m.home)} {m.home}</div>
-                          <div className={`score-badge ${lCls}`} style={{ minWidth: 64, textAlign: "center" }}>
-                            {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, textAlign: "right", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{f(m.home)} {m.home}</div>
+                            <span className={`score-badge ${lCls}`} style={scoreBadgeStyle}>
+                              {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                            </span>
+                            <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{m.away} {f(m.away)}</div>
                           </div>
-                          <div className="team-r">{m.away} {f(m.away)}</div>
-                          <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: 10, color: "#2a3a5a" }}>Grp {m.group} · {m.date} {m.time} UTC</span>
                             {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
                             {actual && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
@@ -511,32 +507,26 @@ export default function AllPredictions({
                         const rCls = rPred ? getMatchPickClass(rPred, actualHasScore ? actual : null) : null;
                         const lSc = actualHasScore ? scoreMatch(lPred, actual) : null;
                         const rSc = (actualHasScore && rPred) ? scoreMatch(rPred, actual) : null;
+                        const scoreBadgeStyle = { width: "auto", flexShrink: 0, padding: "5px 10px", fontSize: 15, whiteSpace: "nowrap" };
                         return (
-                          <div key={i} className="match-row" style={{ gridTemplateColumns: "1fr auto 1fr" }}>
+                          <div key={i} className="match-row" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             {comparing && rVisible ? (
                               <>
-                                {/* Teams row */}
-                                <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "center", gap: 6, fontSize: 12, color: "#8a9aba", marginBottom: 4 }}>
-                                  <span>{f(fix.home)} {fix.home}</span>
-                                  <span style={{ color: "var(--text-dark)" }}>vs</span>
-                                  <span>{fix.away} {f(fix.away)}</span>
+                                <div style={{ textAlign: "center", fontSize: 12, color: "#8a9aba" }}>
+                                  {f(fix.home)} {fix.home} <span style={{ color: "var(--text-dark)", margin: "0 4px" }}>vs</span> {fix.away} {f(fix.away)}
                                 </div>
-                                {/* Score badges */}
-                                <div style={{ textAlign: "right" }}>
-                                  <span className={`score-badge ${lCls}`} style={{ display: "inline-block", minWidth: 52, color: PLAYER_COLORS[leftPlayer] }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                  <span className={`score-badge ${lCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[leftPlayer] }}>
                                     {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
                                   </span>
-                                </div>
-                                <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-dark)", padding: "0 6px" }}>
-                                  {actualHasScore ? `${actual.home_score}–${actual.away_score}` : "—"}
-                                </div>
-                                <div style={{ textAlign: "left" }}>
-                                  <span className={`score-badge ${rCls}`} style={{ display: "inline-block", minWidth: 52, color: PLAYER_COLORS[rightPlayer] }}>
+                                  <span style={{ fontSize: 11, color: "var(--text-dark)", flexShrink: 0 }}>
+                                    {actualHasScore ? `${actual.home_score}–${actual.away_score}` : "—"}
+                                  </span>
+                                  <span className={`score-badge ${rCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[rightPlayer] }}>
                                     {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
                                   </span>
                                 </div>
-                                {/* Pts row */}
-                                <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)", marginTop: 4 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
                                   <span style={{ color: PLAYER_COLORS[leftPlayer] }}>{lSc !== null ? `${lSc.total}pts` : "—"}</span>
                                   <span>{actualHasScore ? "actual" : "not played"}</span>
                                   <span style={{ color: PLAYER_COLORS[rightPlayer] }}>{rSc !== null ? `${rSc.total}pts` : "—"}</span>
@@ -544,12 +534,14 @@ export default function AllPredictions({
                               </>
                             ) : (
                               <>
-                                <div className="team-l">{f(fix.home)} {fix.home}</div>
-                                <div className={`score-badge ${lCls}`} style={{ minWidth: 64, textAlign: "center" }}>
-                                  {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <div style={{ flex: 1, textAlign: "right", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{f(fix.home)} {fix.home}</div>
+                                  <span className={`score-badge ${lCls}`} style={scoreBadgeStyle}>
+                                    {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                                  </span>
+                                  <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{fix.away} {f(fix.away)}</div>
                                 </div>
-                                <div className="team-r">{fix.away} {f(fix.away)}</div>
-                                <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+                                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
                                   {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
                                   {actualHasScore && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
                                   {!actualHasScore && <span style={{ fontSize: 10, color: "var(--text-dark)" }}>not played yet</span>}
