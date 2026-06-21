@@ -1147,7 +1147,7 @@ export default function App() {
                           const a       = actualMatches[m.id] || {};
                           const canEdit = testPhase || matchStarted(m);
                           return (
-                            <div key={m.id} className="match-row" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                            <div key={m.id} className="match-row" style={{ opacity: canEdit ? 1 : 0.45, gridTemplateColumns: "40px 1fr 48px 16px 48px 1fr" }}>
                               <div style={{ fontSize: 10, color: "var(--text-dark)", fontWeight: 700, alignSelf: "center" }}>{m.id}</div>
                               <div className="team-l">{f(m.home)} {m.home}</div>
                               <input
