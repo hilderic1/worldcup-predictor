@@ -1184,16 +1184,32 @@ export default function App() {
               function computeClinch(grp, teams) {
                 const matches = GROUP_MATCHES.filter(m => m.group === grp);
                 const stats = {};
-                teams.forEach(t => { stats[t] = { pts: 0, played: 0 }; });
+                teams.forEach(t => { stats[t] = { pts: 0, played: 0, gf: 0, ga: 0 }; });
                 matches.forEach(m => {
                   const r = actualMatches[m.id];
                   if (r == null || r.home_score == null) return;
                   const hs = +r.home_score, as = +r.away_score;
                   stats[m.home].played++; stats[m.away].played++;
+                  stats[m.home].gf += hs; stats[m.home].ga += as;
+                  stats[m.away].gf += as; stats[m.away].ga += hs;
                   if (hs > as)      { stats[m.home].pts += 3; }
                   else if (as > hs) { stats[m.away].pts += 3; }
                   else              { stats[m.home].pts++; stats[m.away].pts++; }
                 });
+
+                // When all 3 games per team are played, use exact final standings
+                if (teams.every(t => stats[t].played === 3)) {
+                  const sorted = [...teams].sort((a, b) => {
+                    if (stats[b].pts !== stats[a].pts) return stats[b].pts - stats[a].pts;
+                    const gdB = stats[b].gf - stats[b].ga, gdA = stats[a].gf - stats[a].ga;
+                    if (gdB !== gdA) return gdB - gdA;
+                    return stats[b].gf - stats[a].gf;
+                  });
+                  const clinched = {};
+                  sorted.forEach((t, i) => { if (i < 3) clinched[t] = i + 1; });
+                  return clinched;
+                }
+
                 const totalGames = 3;
 
                 // Did team t beat rival in their H2H match (already played)?
@@ -1211,22 +1227,22 @@ export default function App() {
                   const myPts = stats[t].pts;
                   const myMaxPts = myPts + 3 * (totalGames - stats[t].played);
                   const rivals = teams.filter(r => r !== t);
-                  // Rivals that can end up with more points than team's current total
                   const canExceed = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) > myPts);
-                  // Rivals that can exactly tie team's current points (H2H tiebreaker applies only here)
                   const canTie    = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) === myPts);
-                  // Clinch 1st: no rival can exceed current pts, AND every rival that could tie has lost H2H.
-                  // teamDone guard removed: a team's pts can only stay the same or rise, so beating all
-                  // potential tiers H2H is sufficient even with games remaining.
                   const clinch1 = canExceed.length === 0 &&
                     (canTie.length === 0 || canTie.every(r => h2hWon(t, r)));
-                  // Clinch 2nd: guaranteed top-2 (at most 1 rival can still match/exceed pts)
-                  //             AND 1st is no longer possible for this team
                   const canCatch = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) >= myPts);
                   const firstStillPossible = rivals.every(r => myMaxPts >= stats[r].pts);
                   const clinch2 = !clinch1 && canCatch.length <= 1 && !firstStillPossible;
-                  if (clinch1) clinched[t] = 1;
+                  // Clinch 3rd: at most 2 rivals can still mathematically finish above this team
+                  const canBeat = rivals.filter(r => {
+                    const rMax = stats[r].pts + 3 * (totalGames - stats[r].played);
+                    return rMax > myPts || (rMax === myPts && !h2hWon(t, r));
+                  });
+                  const clinch3 = !clinch1 && !clinch2 && canBeat.length <= 2;
+                  if (clinch1)      clinched[t] = 1;
                   else if (clinch2) clinched[t] = 2;
+                  else if (clinch3) clinched[t] = 3;
                 });
                 return clinched;
               }
@@ -1245,13 +1261,15 @@ export default function App() {
                           const clinched = computeClinch(grp, teams);
                           const c1 = teams.find(t => clinched[t] === 1);
                           const c2 = teams.find(t => clinched[t] === 2);
+                          const c3 = teams.find(t => clinched[t] === 3);
                           const current = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
 
-                          if ((c1 && !current.first) || (c2 && !current.second)) {
+                          if ((c1 && !current.first) || (c2 && !current.second) || (c3 && !current.third)) {
                             groupUpdates[grp] = {
                               ...current,
                               ...(c1 && !current.first  ? { first:  c1 } : {}),
                               ...(c2 && !current.second ? { second: c2 } : {}),
+                              ...(c3 && !current.third  ? { third:  c3 } : {}),
                             };
                           }
 

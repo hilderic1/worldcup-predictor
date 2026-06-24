@@ -121,6 +121,29 @@ const GROUP_MATCHES = [
   { id: "L6", group: "L", home: "Croatia",  away: "Ghana" },
 ];
 
+// ── Exact standings when all games are played ─────────────────────────────
+// Sorts by pts DESC → goal-diff DESC → goals-scored DESC (simplified; no H2H sub-table).
+function computeGroupStandings(teams, matches, actualMatches) {
+  const stats = {};
+  teams.forEach(t => { stats[t] = { pts: 0, gf: 0, ga: 0 }; });
+  for (const m of matches) {
+    const r = actualMatches[m.id];
+    if (!r || r.home_score == null) continue;
+    const hs = +r.home_score, as = +r.away_score;
+    stats[m.home].gf += hs; stats[m.home].ga += as;
+    stats[m.away].gf += as; stats[m.away].ga += hs;
+    if (hs > as)      { stats[m.home].pts += 3; }
+    else if (as > hs) { stats[m.away].pts += 3; }
+    else              { stats[m.home].pts++; stats[m.away].pts++; }
+  }
+  return [...teams].sort((a, b) => {
+    if (stats[b].pts !== stats[a].pts) return stats[b].pts - stats[a].pts;
+    const gdB = stats[b].gf - stats[b].ga, gdA = stats[a].gf - stats[a].ga;
+    if (gdB !== gdA) return gdB - gdA;
+    return stats[b].gf - stats[a].gf;
+  });
+}
+
 // ── Clinch logic (mirrors App.jsx computeClinch) ───────────────────────────
 
 function computeClinches(actualMatches) {
@@ -129,6 +152,23 @@ function computeClinches(actualMatches) {
 
   for (const [grp, teams] of Object.entries(GROUPS)) {
     const matches = GROUP_MATCHES.filter(m => m.group === grp);
+
+    // When all games are played we know the exact final standings
+    const allPlayed = matches.every(m => {
+      const r = actualMatches[m.id];
+      return r && r.home_score != null;
+    });
+    if (allPlayed) {
+      const standings = computeGroupStandings(teams, matches, actualMatches);
+      result.push(
+        { group_id: grp, team: standings[0], position: 1 },
+        { group_id: grp, team: standings[1], position: 2 },
+        { group_id: grp, team: standings[2], position: 3 },
+      );
+      continue;
+    }
+
+    // Early clinch detection for in-progress groups
     const stats = {};
     teams.forEach(t => { stats[t] = { pts: 0, played: 0 }; });
 
@@ -168,8 +208,16 @@ function computeClinches(actualMatches) {
       const firstStillPossible = rivals.every(r => myMaxPts >= stats[r].pts);
       const clinch2 = !clinch1 && canCatch.length <= 1 && !firstStillPossible;
 
-      if (clinch1) result.push({ group_id: grp, team: t, position: 1 });
+      // Clinch 3rd: at most 2 rivals can still mathematically finish above this team
+      const canBeat = rivals.filter(r => {
+        const rMax = stats[r].pts + 3 * (TOTAL_GAMES - stats[r].played);
+        return rMax > myPts || (rMax === myPts && !h2hWon(t, r));
+      });
+      const clinch3 = !clinch1 && !clinch2 && canBeat.length <= 2;
+
+      if (clinch1)      result.push({ group_id: grp, team: t, position: 1 });
       else if (clinch2) result.push({ group_id: grp, team: t, position: 2 });
+      else if (clinch3) result.push({ group_id: grp, team: t, position: 3 });
     }
   }
 
@@ -221,8 +269,8 @@ const rankings = {};
 const rankingUpdates = [];
 for (const e of detected) {
   const cur = rankings[e.group_id] || { first: "", second: "", third: "" };
-  const key  = e.position === 1 ? "first" : "second";
-  if (!cur[key]) {
+  const key  = e.position === 1 ? "first" : e.position === 2 ? "second" : "third";
+  if (cur[key] !== e.team) {
     cur[key] = e.team;
     rankings[e.group_id] = cur;
     rankingUpdates.push({
@@ -325,5 +373,6 @@ if (insertErr) { console.error("clinch_events insert error:", insertErr); proces
 
 console.log("New clinch events recorded:");
 for (const e of newEvents) {
-  console.log(`  Group ${e.group_id}: ${e.team} clinched ${e.position === 1 ? "1st" : "2nd"} place`);
+  const posLabel = e.position === 1 ? "1st" : e.position === 2 ? "2nd" : "3rd";
+  console.log(`  Group ${e.group_id}: ${e.team} clinched ${posLabel} place`);
 }
