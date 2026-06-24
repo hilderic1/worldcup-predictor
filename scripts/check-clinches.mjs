@@ -122,26 +122,56 @@ const GROUP_MATCHES = [
 ];
 
 // ── Exact standings when all games are played ─────────────────────────────
-// Sorts by pts DESC → goal-diff DESC → goals-scored DESC (simplified; no H2H sub-table).
+// Tiebreaker order (per FIFA, simplified — no fair play or lots):
+//   pts → H2H pts → H2H GD → H2H GF → overall GD → overall GF → null (unresolvable)
+// Returns { first, second, third } where a value is null when a tie can't be broken.
 function computeGroupStandings(teams, matches, actualMatches) {
   const stats = {};
-  teams.forEach(t => { stats[t] = { pts: 0, gf: 0, ga: 0 }; });
+  const h2h = {}; // h2h[a][b] = { gf, ga } for team a in the match against b
+  teams.forEach(t => {
+    stats[t] = { pts: 0, gf: 0, ga: 0 };
+    h2h[t] = {};
+    teams.forEach(u => { if (u !== t) h2h[t][u] = { gf: 0, ga: 0 }; });
+  });
   for (const m of matches) {
     const r = actualMatches[m.id];
     if (!r || r.home_score == null) continue;
     const hs = +r.home_score, as = +r.away_score;
     stats[m.home].gf += hs; stats[m.home].ga += as;
     stats[m.away].gf += as; stats[m.away].ga += hs;
+    h2h[m.home][m.away].gf += hs; h2h[m.home][m.away].ga += as;
+    h2h[m.away][m.home].gf += as; h2h[m.away][m.home].ga += hs;
     if (hs > as)      { stats[m.home].pts += 3; }
     else if (as > hs) { stats[m.away].pts += 3; }
     else              { stats[m.home].pts++; stats[m.away].pts++; }
   }
-  return [...teams].sort((a, b) => {
+
+  // Pairwise comparison (works correctly for 2-team ties;
+  // for 3-way ties on pts the H2H sub-table is too complex so we fall back to overall stats).
+  function cmp(a, b) {
     if (stats[b].pts !== stats[a].pts) return stats[b].pts - stats[a].pts;
+    const ha = h2h[a][b], hb = h2h[b][a];
+    const h2hPtsA = ha.gf > ha.ga ? 3 : ha.gf === ha.ga ? 1 : 0;
+    const h2hPtsB = hb.gf > hb.ga ? 3 : hb.gf === hb.ga ? 1 : 0;
+    if (h2hPtsB !== h2hPtsA) return h2hPtsB - h2hPtsA;
+    const h2hGdB = hb.gf - hb.ga, h2hGdA = ha.gf - ha.ga;
+    if (h2hGdB !== h2hGdA) return h2hGdB - h2hGdA;
+    if (hb.gf !== ha.gf) return hb.gf - ha.gf;
     const gdB = stats[b].gf - stats[b].ga, gdA = stats[a].gf - stats[a].ga;
     if (gdB !== gdA) return gdB - gdA;
-    return stats[b].gf - stats[a].gf;
-  });
+    if (stats[b].gf !== stats[a].gf) return stats[b].gf - stats[a].gf;
+    return 0; // unresolvable without fair play / lots
+  }
+
+  const sorted = [...teams].sort(cmp);
+
+  // If two adjacent teams are still equal, the position between them is unresolvable
+  const tied = (i) => cmp(sorted[i], sorted[i + 1]) === 0;
+  return {
+    first:  tied(0)              ? null : sorted[0],
+    second: tied(0) || tied(1)   ? null : sorted[1],
+    third:  tied(1) || tied(2)   ? null : sorted[2],
+  };
 }
 
 // ── Clinch logic (mirrors App.jsx computeClinch) ───────────────────────────
@@ -159,12 +189,12 @@ function computeClinches(actualMatches) {
       return r && r.home_score != null;
     });
     if (allPlayed) {
-      const standings = computeGroupStandings(teams, matches, actualMatches);
-      result.push(
-        { group_id: grp, team: standings[0], position: 1 },
-        { group_id: grp, team: standings[1], position: 2 },
-        { group_id: grp, team: standings[2], position: 3 },
-      );
+      const { first, second, third } = computeGroupStandings(teams, matches, actualMatches);
+      if (first)  result.push({ group_id: grp, team: first,  position: 1 });
+      if (second) result.push({ group_id: grp, team: second, position: 2 });
+      if (third)  result.push({ group_id: grp, team: third,  position: 3 });
+      if (!first || !second || !third)
+        console.log(`Group ${grp}: tie unresolvable without fair play data — partial standings saved.`);
       continue;
     }
 

@@ -1197,16 +1197,43 @@ export default function App() {
                   else              { stats[m.home].pts++; stats[m.away].pts++; }
                 });
 
-                // When all 3 games per team are played, use exact final standings
+                // When all 3 games per team are played, use exact final standings.
+                // Tiebreaker: pts → H2H pts → H2H GD → H2H GF → overall GD → overall GF.
+                // If teams are still equal after all that, that position is left unset
+                // (requires fair play data or lots — admin must fill manually).
                 if (teams.every(t => stats[t].played === 3)) {
-                  const sorted = [...teams].sort((a, b) => {
+                  const h2h = {};
+                  teams.forEach(t => {
+                    h2h[t] = {};
+                    teams.forEach(u => { if (u !== t) h2h[t][u] = { gf: 0, ga: 0 }; });
+                  });
+                  matches.forEach(m => {
+                    const r = actualMatches[m.id];
+                    if (!r || r.home_score == null) return;
+                    const hs = +r.home_score, as = +r.away_score;
+                    h2h[m.home][m.away].gf += hs; h2h[m.home][m.away].ga += as;
+                    h2h[m.away][m.home].gf += as; h2h[m.away][m.home].ga += hs;
+                  });
+                  function cmp(a, b) {
                     if (stats[b].pts !== stats[a].pts) return stats[b].pts - stats[a].pts;
+                    const ha = h2h[a][b], hb = h2h[b][a];
+                    const h2hPtsA = ha.gf > ha.ga ? 3 : ha.gf === ha.ga ? 1 : 0;
+                    const h2hPtsB = hb.gf > hb.ga ? 3 : hb.gf === hb.ga ? 1 : 0;
+                    if (h2hPtsB !== h2hPtsA) return h2hPtsB - h2hPtsA;
+                    const h2hGdB = hb.gf - hb.ga, h2hGdA = ha.gf - ha.ga;
+                    if (h2hGdB !== h2hGdA) return h2hGdB - h2hGdA;
+                    if (hb.gf !== ha.gf) return hb.gf - ha.gf;
                     const gdB = stats[b].gf - stats[b].ga, gdA = stats[a].gf - stats[a].ga;
                     if (gdB !== gdA) return gdB - gdA;
-                    return stats[b].gf - stats[a].gf;
-                  });
+                    if (stats[b].gf !== stats[a].gf) return stats[b].gf - stats[a].gf;
+                    return 0; // unresolvable — needs fair play / lots
+                  }
+                  const sorted = [...teams].sort(cmp);
+                  const tied = (i) => cmp(sorted[i], sorted[i + 1]) === 0;
                   const clinched = {};
-                  sorted.forEach((t, i) => { if (i < 3) clinched[t] = i + 1; });
+                  if (!tied(0))              clinched[sorted[0]] = 1;
+                  if (!tied(0) && !tied(1))  clinched[sorted[1]] = 2;
+                  if (!tied(1) && !tied(2))  clinched[sorted[2]] = 3;
                   return clinched;
                 }
 
