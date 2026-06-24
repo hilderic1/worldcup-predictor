@@ -238,12 +238,16 @@ function computeClinches(actualMatches) {
       const firstStillPossible = rivals.every(r => myMaxPts >= stats[r].pts);
       const clinch2 = !clinch1 && canCatch.length <= 1 && !firstStillPossible;
 
-      // Clinch 3rd: at most 2 rivals can still mathematically finish above this team
+      // Clinch 3rd: exactly 2 rivals are guaranteed above (can't rise to 2nd)
+      //             AND at most 2 rivals can still surpass (won't drop to 4th)
       const canBeat = rivals.filter(r => {
         const rMax = stats[r].pts + 3 * (TOTAL_GAMES - stats[r].played);
         return rMax > myPts || (rMax === myPts && !h2hWon(t, r));
       });
-      const clinch3 = !clinch1 && !clinch2 && canBeat.length <= 2;
+      const guaranteedAbove = rivals.filter(r =>
+        stats[r].pts > myMaxPts || (stats[r].pts === myMaxPts && h2hWon(r, t))
+      );
+      const clinch3 = !clinch1 && !clinch2 && canBeat.length <= 2 && guaranteedAbove.length >= 2;
 
       if (clinch1)      result.push({ group_id: grp, team: t, position: 1 });
       else if (clinch2) result.push({ group_id: grp, team: t, position: 2 });
