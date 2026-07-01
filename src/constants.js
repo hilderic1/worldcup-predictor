@@ -109,14 +109,37 @@ export const PLAYER_COLORS = {
 export const FINAL_RANKS = ["1st (Winner)", "2nd (Runner-up)", "3rd place", "4th place"];
 
 export const KO_ROUNDS = [
-  { id: "R32", label: "Round of 32", games: 16, deadline: "2026-06-28T07:00:00-07:00", tzLabel: "Los Angeles time" },
-  { id: "R16", label: "Round of 16", games: 8,  deadline: "2026-07-04T07:00:00-05:00", tzLabel: "Houston time" },
-  { id: "QF",  label: "Quarter-Finals", games: 4, deadline: "2026-07-08T23:59:00-04:00", tzLabel: "EDT" },
-  { id: "SF",  label: "Semi-Finals", games: 2,  deadline: "2026-07-13T23:59:00-04:00", tzLabel: "EDT" },
-  { id: "FINAL", label: "Bronze & Final", games: 2, deadline: "2026-07-17T23:59:00-04:00", tzLabel: "EDT" },
+  // deadline   = picks lock (manual cut-off, set conservatively before first game)
+  // firstKickoff = auto-lock safety net — picks also lock when first game of the round actually starts
+  { id: "R32",   label: "Round of 32",    games: 16, deadline: "2026-06-28T07:00:00-07:00", tzLabel: "Los Angeles time", firstKickoff: "2026-06-28T19:00:00Z" },
+  { id: "R16",   label: "Round of 16",    games: 8,  deadline: "2026-07-04T07:00:00-05:00", tzLabel: "Houston time",     firstKickoff: "2026-07-04T18:00:00Z" },
+  { id: "QF",    label: "Quarter-Finals", games: 4,  deadline: "2026-07-08T23:59:00-04:00", tzLabel: "EDT",              firstKickoff: "2026-07-09T19:00:00Z" },
+  { id: "SF",    label: "Semi-Finals",    games: 2,  deadline: "2026-07-13T23:59:00-04:00", tzLabel: "EDT",              firstKickoff: "2026-07-14T19:00:00Z" },
+  { id: "FINAL", label: "Bronze & Final", games: 2,  deadline: "2026-07-17T23:59:00-04:00", tzLabel: "EDT",              firstKickoff: "2026-07-18T19:00:00Z" },
 ];
 
 export const GLOBAL_DEADLINE = "2026-06-10T23:59:00+01:00";
+
+// All 16 R32 matches in bracket order.
+// type W = group winner, R = runner-up, 3 = 3rd-place team (col = FIFA table column index)
+export const R32_MATCHES = [
+  { match:"M73", home:{type:"R",grp:"A"}, away:{type:"R",grp:"B"} },
+  { match:"M74", home:{type:"W",grp:"E"}, away:{type:"3",col:3}   },
+  { match:"M75", home:{type:"W",grp:"F"}, away:{type:"R",grp:"C"} },
+  { match:"M76", home:{type:"W",grp:"C"}, away:{type:"R",grp:"F"} },
+  { match:"M77", home:{type:"W",grp:"I"}, away:{type:"3",col:5}   },
+  { match:"M78", home:{type:"R",grp:"E"}, away:{type:"R",grp:"I"} },
+  { match:"M79", home:{type:"W",grp:"A"}, away:{type:"3",col:0}   },
+  { match:"M80", home:{type:"W",grp:"L"}, away:{type:"3",col:7}   },
+  { match:"M81", home:{type:"W",grp:"D"}, away:{type:"3",col:2}   },
+  { match:"M82", home:{type:"W",grp:"G"}, away:{type:"3",col:4}   },
+  { match:"M83", home:{type:"R",grp:"K"}, away:{type:"R",grp:"L"} },
+  { match:"M84", home:{type:"W",grp:"H"}, away:{type:"R",grp:"J"} },
+  { match:"M85", home:{type:"W",grp:"B"}, away:{type:"3",col:1}   },
+  { match:"M86", home:{type:"W",grp:"J"}, away:{type:"R",grp:"H"} },
+  { match:"M87", home:{type:"W",grp:"K"}, away:{type:"3",col:6}   },
+  { match:"M88", home:{type:"R",grp:"D"}, away:{type:"R",grp:"G"} },
+];
 
 export const FLAGS = {
   Mexico:"🇲🇽","South Africa":"🇿🇦","South Korea":"🇰🇷",Czechia:"🇨🇿",

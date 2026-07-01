@@ -2,13 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
 import {
   PLAYERS, GROUPS, KO_ROUNDS, SORTED_TEAMS, FINAL_RANKS, ALL_TEAMS, f,
-  GLOBAL_DEADLINE, GROUP_MATCHES,
+  GLOBAL_DEADLINE, GROUP_MATCHES, R32_MATCHES,
 } from "./constants";
+import FIFA_TABLE from "./data/fifaTable";
 import {
   calcTotalScore, isPast, currentOpenRound, formatDeadline,
   scoreMatch, scoreGroupTopThree, scoreKOQualifiers, scoreSFRanking
 } from "./utils";
 import KoMatchGrid from "./components/KoMatchGrid";
+import { exportAllPicks, exportMyPicks } from "./utils/exportReport";
 import Dashboard from "./pages/Dashboard";
 import Picks from "./pages/Picks";
 import Leaderboard from "./pages/Leaderboard";
@@ -38,21 +40,51 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [leaderboardHistory, setLeaderboardHistory] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [playerStats, setPlayerStats] = useState({});
 
   // Picks reveal — true once global deadline passes AND all players have fully submitted
   const [allPicksRevealed, setAllPicksRevealed] = useState(() => isPast(GLOBAL_DEADLINE));
 
+  // Test phase flag (set directly in DB: app_settings key='test_phase' value='true')
+  const [testPhase, setTestPhase] = useState(false);
+  useEffect(() => {
+    supabase.from("app_settings").select("value").eq("key", "test_phase").single()
+      .then(({ data }) => { if (data?.value === "true") setTestPhase(true); });
+  }, []);
+
+
   // Messages (for logged-in non-admin player)
   const [messages, setMessages] = useState([]);
+
+  // Team strengths (from DB; used by bracket simulation)
+  const [teamStrengths, setTeamStrengths] = useState(null);
+  const loadTeamStrengths = useCallback(async () => {
+    const { data } = await supabase.from("team_strengths").select("*");
+    if (!data?.length) return;
+    const fifa = {}, opta = {};
+    data.forEach(r => {
+      if (r.fifa_rank      != null) fifa[r.team_name]  = r.fifa_rank;
+      if (r.opta_win_pct   != null) opta[r.team_name]  = +r.opta_win_pct;
+    });
+    setTeamStrengths({ fifa, opta });
+  }, []);
+  useEffect(() => { loadTeamStrengths(); }, [loadTeamStrengths]);
+
+  // Admin strengths editor state
+  const [strengthsEdits,  setStrengthsEdits]  = useState({});  // { teamName: { fifa_rank, opta_win_pct } }
+  const [strengthsSaving, setStrengthsSaving] = useState(false);
+  const [strengthsSaved,  setStrengthsSaved]  = useState(false);
 
   // Admin nudge tab state
   const [nudgeData, setNudgeData] = useState(null);
   const [nudgeLoading, setNudgeLoading] = useState(false);
   const [nudgeSent, setNudgeSent] = useState({});
+  const [exporting, setExporting] = useState(false);
 
   // Admin UI state
   const [adminTab, setAdminTab] = useState("fixtures");
   const [saveState, setSaveState] = useState("idle");
+  const [adminSelectedThirds, setAdminSelectedThirds] = useState(new Set());
 
   const openRound = currentOpenRound();
 
@@ -149,6 +181,22 @@ export default function App() {
       supabase.from("actual_knockout").select("*"),
       supabase.from("ko_actual_scores").select("*"),
     ]);
+    // Build actuals from the freshly-fetched DB data (avoids stale React state)
+    const freshActualMatches = {};
+    (rm.data || []).forEach(r => (freshActualMatches[r.match_id] = r));
+    const freshActualGroupTopThree = {};
+    (rg.data || []).forEach(r => {
+      if (Array.isArray(r.ranking))
+        freshActualGroupTopThree[r.group_id] = { first: r.ranking[0] || "", second: r.ranking[1] || "", third: r.ranking[2] || "" };
+    });
+    const freshAk = {};
+    (rk.data || []).forEach(r => (freshAk[r.round] = r.teams));
+    const freshKoActualScores = {};
+    (rs.data || []).forEach(r => {
+      if (!freshKoActualScores[r.round]) freshKoActualScores[r.round] = [];
+      freshKoActualScores[r.round][r.game_index] = { home_score: r.home_score, away_score: r.away_score };
+    });
+
     const scores = PLAYERS.map(name => {
       const preds = { matches: {}, groupTopThree: {}, r32: null, r16: null, qf: null, sfRanking: null, koMatches: {} };
       (pm.data || []).filter(r => r.player_name === name).forEach(r => (preds.matches[r.match_id] = r));
@@ -167,9 +215,13 @@ export default function App() {
         preds.koMatches[r.round][r.game_index] = { home_score: r.home_score, away_score: r.away_score };
       });
       const actuals = {
-        matches: actualMatches, groupTopThree: actualGroupTopThree,
-        r32: actualR32, r16: actualR16, qf: actualQF, sfRanking: actualSFRank,
-        koMatches: koActualScores,
+        matches: freshActualMatches,
+        groupTopThree: freshActualGroupTopThree,
+        r32: freshAk["R32"] || Array(32).fill(""),
+        r16: freshAk["R16"] || Array(16).fill(""),
+        qf:  freshAk["QF"]  || Array(8).fill(""),
+        sfRanking: freshAk["SF_RANK"] || Array(4).fill(""),
+        koMatches: freshKoActualScores,
       };
       return { name, ...calcTotalScore(preds, actuals) };
     });
@@ -203,6 +255,33 @@ export default function App() {
       });
       playerPredictions[name] = preds;
     });
+
+    // ── PER-MATCH STATS ──
+    const matchStats = {};
+    PLAYERS.forEach(name => {
+      matchStats[name] = { perfectGames: 0, correctResults: 0, totalRawDiff: 0, totalPlayed: 0 };
+    });
+    GROUP_MATCHES.forEach(m => {
+      const actual = freshActualMatches[m.id];
+      if (!actual || actual.home_score == null || actual.away_score == null) return;
+      PLAYERS.forEach(name => {
+        const pred = playerPredictions[name].matches[m.id];
+        if (!pred || pred.home_score == null) return;
+        const ph = +pred.home_score, pa = +pred.away_score;
+        if (ph === 10 && pa === 10) return; // sentinel
+        const scored = scoreMatch(pred, actual);
+        const s = matchStats[name];
+        s.totalPlayed++;
+        s.totalRawDiff += Math.abs(ph - +actual.home_score) + Math.abs(pa - +actual.away_score);
+        if (scored.total === 40) s.perfectGames++;
+        if (scored.result > 0)  s.correctResults++;
+      });
+    });
+    PLAYERS.forEach(name => {
+      const s = matchStats[name];
+      s.avgGoalDiff = s.totalPlayed > 0 ? +(s.totalRawDiff / s.totalPlayed).toFixed(2) : null;
+    });
+    setPlayerStats(matchStats);
 
     const events = [];
 
@@ -362,7 +441,7 @@ export default function App() {
 
     setLeaderboardHistory(history);
     setLeaderboardLoading(false);
-  }, [actualMatches, actualGroupTopThree, actualR32, actualR16, actualQF, actualSFRank, koActualScores]);
+  }, []);
 
   // ── MESSAGES ──
   const loadMessages = useCallback(async (playerName) => {
@@ -443,6 +522,7 @@ export default function App() {
     setPlayer(data);
     if (data.is_admin) {
       setView("admin");
+      loadLeaderboard();
     } else {
       setView("dashboard");
       loadLeaderboard();
@@ -486,6 +566,65 @@ export default function App() {
     if (page === "leaderboard") loadLeaderboard();
     if (page === "dashboard" && leaderboard.length === 0) loadLeaderboard();
     setView(page);
+  }
+
+  // ── TEST MODE helpers (admin only) ──
+
+  // Returns the UTC timestamp for a GROUP_MATCHES entry
+  function matchKickoff(m) {
+    const [mo, dy] = m.date.split("/");
+    const [hh, mm] = m.time.split(":");
+    return new Date(`2026-${mo.padStart(2,"0")}-${dy.padStart(2,"0")}T${hh.padStart(2,"0")}:${mm}:00Z`).getTime();
+  }
+
+  // Has a group match started yet?
+  function matchStarted(m) { return Date.now() >= matchKickoff(m); }
+
+  // Has a KO round started yet (firstKickoff passed)?
+  function roundStarted(r) {
+    return !r.firstKickoff || Date.now() >= new Date(r.firstKickoff).getTime();
+  }
+
+  // Have ALL matches of a group been played?
+  function groupComplete(grp) {
+    return GROUP_MATCHES.filter(m => m.group === grp).every(matchStarted);
+  }
+
+  // Has at least one match of a group started? (enough to enter clinched positions)
+  function groupStarted(grp) {
+    return GROUP_MATCHES.filter(m => m.group === grp).some(matchStarted);
+  }
+
+  async function enableTestMode() {
+    await supabase.from("app_settings")
+      .upsert({ key: "test_phase", value: "true" }, { onConflict: "key" });
+    setTestPhase(true);
+  }
+
+  async function endTestMode() {
+    // Delete actual results for group matches that haven't started yet
+    const futureMatchIds = GROUP_MATCHES.filter(m => !matchStarted(m)).map(m => m.id);
+    if (futureMatchIds.length)
+      await supabase.from("actual_results").delete().in("match_id", futureMatchIds);
+
+    // Delete group rankings for groups with any future match
+    const futureGroups = Object.keys(GROUPS).filter(grp => !groupComplete(grp));
+    if (futureGroups.length)
+      await supabase.from("actual_group_rankings").delete().in("group_id", futureGroups);
+
+    // Delete KO scores, qualifier results, AND fixtures for rounds not yet started
+    const futureRoundIds = KO_ROUNDS.filter(r => !roundStarted(r)).map(r => r.id);
+    if (futureRoundIds.length) {
+      await supabase.from("ko_actual_scores").delete().in("round", futureRoundIds);
+      await supabase.from("actual_knockout").delete().in("round", futureRoundIds);
+      await supabase.from("ko_fixtures").delete().in("round", futureRoundIds);
+    }
+
+    // Turn off test mode
+    await supabase.from("app_settings")
+      .update({ value: "false" }).eq("key", "test_phase");
+    setTestPhase(false);
+    await loadActuals(); // refresh the admin panel
   }
 
   // ── SAVE ACTUALS (admin) ──
@@ -540,6 +679,49 @@ export default function App() {
     }
   }
 
+  // ── R32 AUTO-GENERATE ──
+  function generateR32Fixtures() {
+    const pos = {};
+    Object.entries(actualGroupTopThree).forEach(([grp, v]) => {
+      pos[grp] = { W: v.first || "", R: v.second || "" };
+    });
+    const thirdByGrp = {};
+    Object.entries(actualGroupTopThree).forEach(([grp, v]) => {
+      if (adminSelectedThirds.has(grp) && v.third) thirdByGrp[grp] = v.third;
+    });
+    const qualGrps  = [...adminSelectedThirds].sort().join("");
+    const colAssign = FIFA_TABLE[qualGrps] || null;
+
+    function resolve(slot) {
+      if (slot.type === "W") return pos[slot.grp]?.W || "";
+      if (slot.type === "R") return pos[slot.grp]?.R || "";
+      if (slot.type === "3") {
+        if (!colAssign) return "";
+        const srcGrp = colAssign[slot.col];
+        return thirdByGrp[srcGrp] || "";
+      }
+      return "";
+    }
+
+    const r32 = R32_MATCHES.map(m => ({ home: resolve(m.home), away: resolve(m.away) }));
+    setKoFixtures(prev => ({ ...prev, R32: r32 }));
+
+    // Derive the 32 qualifying teams directly from the bracket (preserves FIFA slot order)
+    setActualR32(r32.flatMap(g => [g.home, g.away]).filter(Boolean));
+
+    // Also populate the 32 qualifying teams (winners + runners-up + selected 3rds)
+    const r32Teams = [];
+    Object.entries(actualGroupTopThree).forEach(([, v]) => {
+      if (v.first)  r32Teams.push(v.first);
+      if (v.second) r32Teams.push(v.second);
+    });
+    adminSelectedThirds.forEach(grp => {
+      const v = actualGroupTopThree[grp];
+      if (v?.third) r32Teams.push(v.third);
+    });
+    setActualR32(r32Teams);
+  }
+
   // ── RENDER ──
   return (
     <div>
@@ -551,7 +733,7 @@ export default function App() {
           </div>
           <nav className="nav">
             {player && <span className="nav-user">👤 {player.name}</span>}
-            {player && !player.is_admin && (
+            {player && (
               <>
                 <button
                   className={`nav-pill ${view === "dashboard" ? "active" : ""}`}
@@ -582,34 +764,18 @@ export default function App() {
                     className={`nav-pill ${view === "predictions" ? "active" : ""}`}
                     onClick={() => navigateTo("predictions")}
                   >
-                    👁 Predictions
+                    👁 Compare Players Picks
                   </button>
                 )}
               </>
             )}
             {player?.is_admin && (
-              <>
-                <button
-                  className={`nav-pill ${view === "admin" ? "active" : ""}`}
-                  onClick={() => setView("admin")}
-                >
-                  Admin
-                </button>
-                <button
-                  className={`nav-pill ${view === "leaderboard" ? "active" : ""}`}
-                  onClick={() => navigateTo("leaderboard")}
-                >
-                  Leaderboard
-                </button>
-                {allPicksRevealed && (
-                  <button
-                    className={`nav-pill ${view === "predictions" ? "active" : ""}`}
-                    onClick={() => navigateTo("predictions")}
-                  >
-                    👁 Predictions
-                  </button>
-                )}
-              </>
+              <button
+                className={`nav-pill ${view === "admin" ? "active" : ""}`}
+                onClick={() => setView("admin")}
+              >
+                Admin
+              </button>
             )}
             {player && (
               <button className="nav-pill" onClick={logout}>Exit</button>
@@ -648,7 +814,7 @@ export default function App() {
         )}
 
         {/* DASHBOARD */}
-        {view === "dashboard" && player && !player.is_admin && (
+        {view === "dashboard" && player && (
           <Dashboard
             player={player}
             lastLogin={player.last_login}
@@ -657,11 +823,13 @@ export default function App() {
             onNavigate={navigateTo}
             messages={messages}
             onMarkRead={markMessageRead}
+            teamStrengths={teamStrengths}
+            actualMatches={actualMatches}
           />
         )}
 
         {/* PICKS */}
-        {view === "picks" && player && !player.is_admin && (
+        {view === "picks" && player && (
           <Picks
             player={player}
             actualMatches={actualMatches}
@@ -682,11 +850,13 @@ export default function App() {
             history={leaderboardHistory}
             loading={leaderboardLoading}
             onRefresh={loadLeaderboard}
+            player={player}
+            playerStats={playerStats}
           />
         )}
 
         {/* PROFILE */}
-        {view === "profile" && player && !player.is_admin && (
+        {view === "profile" && player && (
           <Profile player={player} />
         )}
 
@@ -710,11 +880,34 @@ export default function App() {
           <>
             <div className="section-title" style={{ marginBottom: 18 }}>🔧 Admin Panel</div>
 
+
+            {/* Test mode toggle */}
+            <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "14px 18px", border: testPhase ? "1px solid #f0c030" : "1px solid #2a3a5a" }}>
+              {testPhase ? (
+                <>
+                  <span style={{ color: "#f0c030", fontWeight: 700 }}>🧪 Test Mode is ACTIVE — future results can be entered</span>
+                  <button
+                    className="btn-save"
+                    style={{ background: "#cc3333", borderColor: "#cc3333" }}
+                    onClick={endTestMode}
+                  >
+                    🔒 End Test Mode &amp; Delete Future Test Results
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ color: "var(--text-dark)", fontSize: 13 }}>Test Mode off — results locked to started games only</span>
+                  <button className="tab" onClick={enableTestMode}>🧪 Enable Test Mode</button>
+                </>
+              )}
+            </div>
+
+
             <div className="card">
               <div className="card-label">Tournament Deadlines</div>
               <table className="deadline-table">
                 <thead>
-                  <tr><th>Stage</th><th>Deadline</th><th>Status</th></tr>
+                  <tr><th>Stage</th><th>Deadline</th><th>First Kickoff</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                   <tr>
@@ -724,29 +917,45 @@ export default function App() {
                       {isPast(GLOBAL_DEADLINE) ? "🔒 Locked" : "🟢 Open"}
                     </td>
                   </tr>
-                  {KO_ROUNDS.map(r => (
-                    <tr key={r.id}>
-                      <td>{r.label} scores</td>
-                      <td className={isPast(r.deadline) ? "past" : openRound === r.id ? "open" : ""}>
-                        {formatDeadline(r.deadline, r.tzLabel)}
-                      </td>
-                      <td className={isPast(r.deadline) ? "past" : openRound === r.id ? "open" : ""}>
-                        {isPast(r.deadline) ? "🔒 Locked" : openRound === r.id ? "🟢 Open" : "⏳ Upcoming"}
-                      </td>
-                    </tr>
-                  ))}
+                  {KO_ROUNDS.map(r => {
+                    const deadlineMs = new Date(r.deadline).getTime();
+                    const kickoffMs  = r.firstKickoff ? new Date(r.firstKickoff).getTime() : Infinity;
+                    const lockedBy   = Date.now() >= Math.min(deadlineMs, kickoffMs);
+                    const lockedByKickoff = !isPast(r.deadline) && r.firstKickoff && isPast(r.firstKickoff);
+                    return (
+                      <tr key={r.id}>
+                        <td>{r.label} scores</td>
+                        <td className={isPast(r.deadline) ? "past" : openRound === r.id || openRound === "TEST" ? "open" : ""}>
+                          {formatDeadline(r.deadline, r.tzLabel)}
+                        </td>
+                        <td style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                          {r.firstKickoff
+                            ? new Date(r.firstKickoff).toLocaleString("en-GB", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" }) + " UTC"
+                            : "—"}
+                        </td>
+                        <td className={lockedBy ? "past" : openRound === r.id || openRound === "TEST" ? "open" : ""}>
+                          {testPhase ? "🧪 Test open"
+                            : lockedByKickoff ? "🔒 Locked (game started)"
+                            : lockedBy ? "🔒 Locked"
+                            : openRound === r.id ? "🟢 Open"
+                            : "⏳ Upcoming"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             <div className="tab-row">
               {[
-                ["fixtures", "🔧 KO Fixtures"],
-                ["results", "⚽ Group Results"],
-                ["groups", "📊 Group Top 3"],
+                ["fixtures",   "🔧 KO Fixtures"],
+                ["results",    "⚽ Group Results"],
+                ["groups",     "📊 Group Top 3"],
                 ["ko_results", "🏆 KO Results"],
                 ["qualifiers", "👥 Qualifiers"],
-                ["nudge", "📬 Nudge Players"],
+                ["nudge",      "📬 Nudge Players"],
+                ["strengths",  "💪 Team Strengths"],
               ].map(([k, l]) => (
                 <button
                   key={k}
@@ -763,139 +972,463 @@ export default function App() {
 
             {/* KO FIXTURES */}
             {adminTab === "fixtures" && (
-              <div className="card">
-                <div className="card-label">Enter knockout fixtures — players can then predict scores for each open round</div>
-                {KO_ROUNDS.map(r => (
-                  <div key={r.id} style={{ marginBottom: 20 }}>
-                    <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#f0c030", marginBottom: 8, fontWeight: 700 }}>
-                      {r.label}
-                    </div>
-                    {Array(r.games).fill(0).map((_, i) => {
-                      const fix = (koFixtures[r.id] || [])[i] || {};
-                      const availableTeams =
-                        r.id === "R32" ? ALL_TEAMS :
-                        r.id === "R16" ? (actualR32.filter(Boolean).length ? actualR32.filter(Boolean) : ALL_TEAMS) :
-                        r.id === "QF"  ? (actualR16.filter(Boolean).length ? actualR16.filter(Boolean) : ALL_TEAMS) :
-                        r.id === "SF"  ? (actualQF.filter(Boolean).length  ? actualQF.filter(Boolean)  : ALL_TEAMS) :
-                        (actualSFRank.filter(Boolean).length ? actualSFRank.filter(Boolean) : ALL_TEAMS);
-                      return (
-                        <div key={i} className="fixture-row">
-                          <div className="fixture-num">{i + 1}</div>
-                          <select
-                            className="fixture-sel"
-                            value={fix.home || ""}
-                            onChange={e => {
-                              const u = { ...koFixtures };
-                              if (!u[r.id]) u[r.id] = [];
-                              if (!u[r.id][i]) u[r.id][i] = {};
-                              u[r.id][i] = { ...u[r.id][i], home: e.target.value };
-                              setKoFixtures(u);
-                            }}
-                          >
-                            <option value="">— home —</option>
-                            {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
-                              <option key={t} value={t}>{f(t)} {t}</option>
-                            ))}
-                          </select>
-                          <div className="sep" style={{ textAlign: "center" }}>vs</div>
-                          <select
-                            className="fixture-sel"
-                            value={fix.away || ""}
-                            onChange={e => {
-                              const u = { ...koFixtures };
-                              if (!u[r.id]) u[r.id] = [];
-                              if (!u[r.id][i]) u[r.id][i] = {};
-                              u[r.id][i] = { ...u[r.id][i], away: e.target.value };
-                              setKoFixtures(u);
-                            }}
-                          >
-                            <option value="">— away —</option>
-                            {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
-                              <option key={t} value={t}>{f(t)} {t}</option>
-                            ))}
-                          </select>
+              <>
+                {/* ── Auto-generate R32 ── */}
+                <div className="card" style={{ marginBottom: 12 }}>
+                  <div className="card-label">Auto-generate R32 bracket from actual group standings</div>
+                  <p style={{ fontSize: 12, color: "var(--text-dark)", margin: "6px 0 12px" }}>
+                    Select the 8 qualifying 3rd-place teams, then click Generate.
+                    The R32 fixtures below will be filled in automatically using the FIFA bracket assignment table.
+                    You must have entered 1st/2nd/3rd in the Group Top 3 tab first.
+                  </p>
+                  {(() => {
+                    const groups = Object.keys(GROUPS);
+                    const nSel   = adminSelectedThirds.size;
+                    const canGen = Object.values(actualGroupTopThree).some(v => v?.first || v?.second);
+
+                    function toggleThird(grp) {
+                      setAdminSelectedThirds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(grp)) { next.delete(grp); }
+                        else if (next.size < 8) { next.add(grp); }
+                        return next;
+                      });
+                    }
+
+                    return (
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6, marginBottom: 14 }}>
+                          {groups.map(grp => {
+                            const v        = actualGroupTopThree[grp] || {};
+                            const third    = v.third || "";
+                            const selected = adminSelectedThirds.has(grp);
+                            const missing  = !v.first || !v.second;
+                            return (
+                              <div
+                                key={grp}
+                                onClick={() => !missing && toggleThird(grp)}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 8,
+                                  padding: "7px 10px", borderRadius: 6, cursor: missing ? "default" : "pointer",
+                                  border: "1px solid",
+                                  borderColor: selected ? "#4caf80" : "#2a3a5a",
+                                  background:  selected ? "rgba(76,175,128,0.10)" : "#070f1c",
+                                  opacity: missing ? 0.4 : 1,
+                                }}
+                              >
+                                <div style={{
+                                  width: 16, height: 16, borderRadius: 3, flexShrink: 0,
+                                  border: "1px solid", borderColor: selected ? "#4caf80" : "#2a3a5a",
+                                  background: selected ? "#4caf80" : "transparent",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontSize: 11, color: "#0a1628", fontWeight: 700,
+                                }}>
+                                  {selected ? "✓" : ""}
+                                </div>
+                                <div>
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: selected ? "#4caf80" : "var(--text-dark)", letterSpacing: 1 }}>GRP {grp}</span>
+                                  <span style={{ fontSize: 12, color: selected ? "var(--text-main)" : "var(--text-dark)", marginLeft: 6 }}>
+                                    {third ? `${f(third)} ${third}` : <em>3rd not entered</em>}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* GROUP RESULTS */}
-            {adminTab === "results" && Object.entries(GROUPS).map(([grp]) => (
-              <div key={grp} className="card">
-                <div className="card-label">Group {grp}</div>
-                <div className="match-list">
-                  {GROUP_MATCHES.filter(m => m.group === grp).map(m => {
-                    const a = actualMatches[m.id] || {};
-                    return (
-                      <div key={m.id} className="match-row">
-                        <div className="team-l">{f(m.home)} {m.home}</div>
-                        <input
-                          className="score-inp" type="number" min="0" max="20"
-                          value={a.home_score ?? ""} placeholder="0"
-                          onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], home_score: e.target.value } }))}
-                        />
-                        <div className="sep">–</div>
-                        <input
-                          className="score-inp" type="number" min="0" max="20"
-                          value={a.away_score ?? ""} placeholder="0"
-                          onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], away_score: e.target.value } }))}
-                        />
-                        <div className="team-r">{m.away} {f(m.away)}</div>
-                      </div>
+                        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                          <button
+                            className="btn-save"
+                            style={{ width: "auto", opacity: canGen ? 1 : 0.4 }}
+                            disabled={!canGen}
+                            onClick={generateR32Fixtures}
+                          >
+                            ⚡ Generate R32 Bracket
+                          </button>
+                          {!canGen && (
+                            <span style={{ fontSize: 11, color: "var(--text-dark)" }}>
+                              Enter at least one group result in Group Top 3 tab first
+                            </span>
+                          )}
+                          {canGen && nSel < 8 && (
+                            <span style={{ fontSize: 11, color: "#f0c030" }}>
+                              {nSel}/8 3rd-place teams selected — 3rd-place slots will be blank until all 8 are chosen
+                            </span>
+                          )}
+                        </div>
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
-              </div>
-            ))}
 
-            {/* GROUP TOP 3 */}
-            {adminTab === "groups" && (
-              <div className="card">
-                <div className="card-label">Actual 1st, 2nd and 3rd per group</div>
-                <div className="group-grid">
-                  {Object.entries(GROUPS).map(([grp, teams]) => {
-                    const v = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
-                    return (
-                      <div key={grp} className="group-box">
-                        <div className="group-box-title">Group {grp}</div>
-                        {["first", "second", "third"].map((rank, i) => (
-                          <div key={rank} className="rank-row">
-                            <div className="rank-num">{i + 1}</div>
+                {/* ── Manual fixture entry (all rounds) ── */}
+                <div className="card">
+                  <div className="card-label">Review / override fixtures — also used for R16, QF, SF, Final</div>
+                  {KO_ROUNDS.map(r => (
+                    <div key={r.id} style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#f0c030", marginBottom: 8, fontWeight: 700 }}>
+                        {r.label}
+                      </div>
+                      {Array(r.games).fill(0).map((_, i) => {
+                        const fix = (koFixtures[r.id] || [])[i] || {};
+                        const availableTeams =
+                          r.id === "R32" ? ALL_TEAMS :
+                          r.id === "R16" ? (actualR32.filter(Boolean).length ? actualR32.filter(Boolean) : ALL_TEAMS) :
+                          r.id === "QF"  ? (actualR16.filter(Boolean).length ? actualR16.filter(Boolean) : ALL_TEAMS) :
+                          r.id === "SF"  ? (actualQF.filter(Boolean).length  ? actualQF.filter(Boolean)  : ALL_TEAMS) :
+                          (actualSFRank.filter(Boolean).length ? actualSFRank.filter(Boolean) : ALL_TEAMS);
+                        return (
+                          <div key={i} className="fixture-row">
+                            <div className="fixture-num">{i + 1}</div>
                             <select
-                              className="rank-sel"
-                              value={v[rank] || ""}
-                              onChange={e => setActualGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: e.target.value } }))}
+                              className="fixture-sel"
+                              value={fix.home || ""}
+                              onChange={e => {
+                                const u = { ...koFixtures };
+                                if (!u[r.id]) u[r.id] = [];
+                                if (!u[r.id][i]) u[r.id][i] = {};
+                                u[r.id][i] = { ...u[r.id][i], home: e.target.value };
+                                setKoFixtures(u);
+                              }}
                             >
-                              <option value="">— pick —</option>
-                              {[...teams].sort((a, b) => a.localeCompare(b)).map(t => (
+                              <option value="">— home —</option>
+                              {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
+                                <option key={t} value={t}>{f(t)} {t}</option>
+                              ))}
+                            </select>
+                            <div className="sep" style={{ textAlign: "center" }}>vs</div>
+                            <select
+                              className="fixture-sel"
+                              value={fix.away || ""}
+                              onChange={e => {
+                                const u = { ...koFixtures };
+                                if (!u[r.id]) u[r.id] = [];
+                                if (!u[r.id][i]) u[r.id][i] = {};
+                                u[r.id][i] = { ...u[r.id][i], away: e.target.value };
+                                setKoFixtures(u);
+                              }}
+                            >
+                              <option value="">— away —</option>
+                              {[...availableTeams].sort((a, b) => a.localeCompare(b)).map(t => (
                                 <option key={t} value={t}>{f(t)} {t}</option>
                               ))}
                             </select>
                           </div>
-                        ))}
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
-              </div>
+              </>
             )}
 
+            {/* GROUP RESULTS */}
+            {adminTab === "results" && (() => {
+              const sorted = [...GROUP_MATCHES].sort((a, b) => matchKickoff(a) - matchKickoff(b));
+              // Group by date label
+              const byDate = [];
+              let curDate = null;
+              sorted.forEach(m => {
+                const [mo, dy] = m.date.split("/");
+                const label = new Date(`2026-${mo.padStart(2,"0")}-${dy.padStart(2,"0")}T12:00:00Z`)
+                  .toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                if (label !== curDate) { byDate.push({ label, matches: [] }); curDate = label; }
+                byDate[byDate.length - 1].matches.push(m);
+              });
+              return (
+                <div className="card">
+                  <div className="card-label">Group stage results — in order of kick-off time</div>
+                  {byDate.map(({ label, matches }) => (
+                    <div key={label}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f0c030", margin: "14px 0 6px" }}>
+                        {label}
+                      </div>
+                      <div className="match-list">
+                        {matches.map(m => {
+                          const a       = actualMatches[m.id] || {};
+                          const canEdit = testPhase || matchStarted(m);
+                          return (
+                            <div key={m.id} className="match-row" style={{ opacity: canEdit ? 1 : 0.45, gridTemplateColumns: "40px 1fr 48px 16px 48px 1fr" }}>
+                              <div style={{ fontSize: 10, color: "var(--text-dark)", fontWeight: 700, alignSelf: "center" }}>{m.id}</div>
+                              <div className="team-l">{f(m.home)} {m.home}</div>
+                              <input
+                                className="score-inp" type="number" min="0" max="20"
+                                value={a.home_score ?? ""} placeholder="0"
+                                disabled={!canEdit}
+                                onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], home_score: e.target.value } }))}
+                              />
+                              <div className="sep">–</div>
+                              <input
+                                className="score-inp" type="number" min="0" max="20"
+                                value={a.away_score ?? ""} placeholder="0"
+                                disabled={!canEdit}
+                                onChange={e => setActualMatches(prev => ({ ...prev, [m.id]: { ...prev[m.id], away_score: e.target.value } }))}
+                              />
+                              <div className="team-r">{m.away} {f(m.away)}</div>
+                              {!canEdit && <div style={{ gridColumn:"1/-1", fontSize:10, color:"var(--text-dark)" }}>⏳ Not started yet</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* GROUP TOP 3 */}
+            {adminTab === "groups" && (() => {
+              // ── Clinch detection ──
+              // For each group, compute current standings from entered actual results.
+              // A team clinches 1st  when pts > every rival's maxPossible.
+              // A team clinches 2nd  when at most 1 rival can still reach their pts.
+              function computeClinch(grp, teams) {
+                const matches = GROUP_MATCHES.filter(m => m.group === grp);
+                const stats = {};
+                teams.forEach(t => { stats[t] = { pts: 0, played: 0, gf: 0, ga: 0 }; });
+                matches.forEach(m => {
+                  const r = actualMatches[m.id];
+                  if (r == null || r.home_score == null) return;
+                  const hs = +r.home_score, as = +r.away_score;
+                  stats[m.home].played++; stats[m.away].played++;
+                  stats[m.home].gf += hs; stats[m.home].ga += as;
+                  stats[m.away].gf += as; stats[m.away].ga += hs;
+                  if (hs > as)      { stats[m.home].pts += 3; }
+                  else if (as > hs) { stats[m.away].pts += 3; }
+                  else              { stats[m.home].pts++; stats[m.away].pts++; }
+                });
+
+                // When all 3 games per team are played, use exact final standings.
+                // Tiebreaker: pts → H2H pts → H2H GD → H2H GF → overall GD → overall GF.
+                // If teams are still equal after all that, that position is left unset
+                // (requires fair play data or lots — admin must fill manually).
+                if (teams.every(t => stats[t].played === 3)) {
+                  const h2h = {};
+                  teams.forEach(t => {
+                    h2h[t] = {};
+                    teams.forEach(u => { if (u !== t) h2h[t][u] = { gf: 0, ga: 0 }; });
+                  });
+                  matches.forEach(m => {
+                    const r = actualMatches[m.id];
+                    if (!r || r.home_score == null) return;
+                    const hs = +r.home_score, as = +r.away_score;
+                    h2h[m.home][m.away].gf += hs; h2h[m.home][m.away].ga += as;
+                    h2h[m.away][m.home].gf += as; h2h[m.away][m.home].ga += hs;
+                  });
+                  function cmp(a, b) {
+                    if (stats[b].pts !== stats[a].pts) return stats[b].pts - stats[a].pts;
+                    const ha = h2h[a][b], hb = h2h[b][a];
+                    const h2hPtsA = ha.gf > ha.ga ? 3 : ha.gf === ha.ga ? 1 : 0;
+                    const h2hPtsB = hb.gf > hb.ga ? 3 : hb.gf === hb.ga ? 1 : 0;
+                    if (h2hPtsB !== h2hPtsA) return h2hPtsB - h2hPtsA;
+                    const h2hGdB = hb.gf - hb.ga, h2hGdA = ha.gf - ha.ga;
+                    if (h2hGdB !== h2hGdA) return h2hGdB - h2hGdA;
+                    if (hb.gf !== ha.gf) return hb.gf - ha.gf;
+                    const gdB = stats[b].gf - stats[b].ga, gdA = stats[a].gf - stats[a].ga;
+                    if (gdB !== gdA) return gdB - gdA;
+                    if (stats[b].gf !== stats[a].gf) return stats[b].gf - stats[a].gf;
+                    return 0; // unresolvable — needs fair play / lots
+                  }
+                  const sorted = [...teams].sort(cmp);
+                  const tied = (i) => cmp(sorted[i], sorted[i + 1]) === 0;
+                  const clinched = {};
+                  if (!tied(0))              clinched[sorted[0]] = 1;
+                  if (!tied(0) && !tied(1))  clinched[sorted[1]] = 2;
+                  if (!tied(1) && !tied(2))  clinched[sorted[2]] = 3;
+                  return clinched;
+                }
+
+                const totalGames = 3;
+
+                // Did team t beat rival in their H2H match (already played)?
+                function h2hWon(t, rival) {
+                  const m = matches.find(x => (x.home === t && x.away === rival) || (x.home === rival && x.away === t));
+                  if (!m) return false;
+                  const r = actualMatches[m.id];
+                  if (!r || r.home_score == null) return false;
+                  const hs = +r.home_score, as = +r.away_score;
+                  return m.home === t ? hs > as : as > hs;
+                }
+
+                const clinched = {};
+                teams.forEach(t => {
+                  const myPts = stats[t].pts;
+                  const myMaxPts = myPts + 3 * (totalGames - stats[t].played);
+                  const rivals = teams.filter(r => r !== t);
+                  const canExceed = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) > myPts);
+                  const canTie    = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) === myPts);
+                  const clinch1 = canExceed.length === 0 &&
+                    (canTie.length === 0 || canTie.every(r => h2hWon(t, r)));
+                  const canCatch = rivals.filter(r => stats[r].pts + 3 * (totalGames - stats[r].played) >= myPts);
+                  const firstStillPossible = rivals.every(r => myMaxPts >= stats[r].pts);
+                  const clinch2 = !clinch1 && canCatch.length <= 1 && !firstStillPossible;
+                  // Clinch 3rd: exactly 2 rivals are guaranteed above (can't rise to 2nd)
+                  //             AND at most 2 rivals can still surpass (won't drop to 4th)
+                  const canBeat = rivals.filter(r => {
+                    const rMax = stats[r].pts + 3 * (totalGames - stats[r].played);
+                    return rMax > myPts || (rMax === myPts && !h2hWon(t, r));
+                  });
+                  const guaranteedAbove = rivals.filter(r =>
+                    stats[r].pts > myMaxPts || (stats[r].pts === myMaxPts && h2hWon(r, t))
+                  );
+                  const clinch3 = !clinch1 && !clinch2 && canBeat.length <= 2 && guaranteedAbove.length >= 2;
+                  if (clinch1)      clinched[t] = 1;
+                  else if (clinch2) clinched[t] = 2;
+                  else if (clinch3) clinched[t] = 3;
+                });
+                return clinched;
+              }
+
+              return (
+                <div className="card">
+                  <div className="card-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Actual 1st, 2nd and 3rd per group</span>
+                    <button
+                      className="btn-sm"
+                      onClick={async () => {
+                        const groupUpdates = {};
+                        const r32Updates = [...actualR32];
+
+                        Object.entries(GROUPS).forEach(([grp, teams]) => {
+                          const clinched = computeClinch(grp, teams);
+                          const c1 = teams.find(t => clinched[t] === 1);
+                          const c2 = teams.find(t => clinched[t] === 2);
+                          const c3 = teams.find(t => clinched[t] === 3);
+                          const current = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
+
+                          if ((c1 && !current.first) || (c2 && !current.second) || (c3 && !current.third)) {
+                            groupUpdates[grp] = {
+                              ...current,
+                              ...(c1 && !current.first  ? { first:  c1 } : {}),
+                              ...(c2 && !current.second ? { second: c2 } : {}),
+                              ...(c3 && !current.third  ? { third:  c3 } : {}),
+                            };
+                          }
+
+                          R32_MATCHES.forEach((m, i) => {
+                            [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
+                              if (slot.grp !== grp) return;
+                              if (slot.type === "W" && c1 && !r32Updates[idx]) r32Updates[idx] = c1;
+                              if (slot.type === "R" && c2 && !r32Updates[idx]) r32Updates[idx] = c2;
+                            });
+                          });
+                        });
+
+                        const newGroupTopThree = { ...actualGroupTopThree, ...groupUpdates };
+
+                        // Persist immediately — don't wait for manual Save
+                        if (Object.keys(groupUpdates).length) {
+                          const groupRows = Object.entries(newGroupTopThree).map(([group_id, v]) => ({
+                            group_id, ranking: [v.first || "", v.second || "", v.third || ""],
+                          }));
+                          await supabase.from("actual_group_rankings").upsert(groupRows, { onConflict: "group_id" });
+                          setActualGroupTopThree(newGroupTopThree);
+                        }
+                        if (r32Updates.some((t, i) => t !== actualR32[i])) {
+                          await supabase.from("actual_knockout").upsert(
+                            [{ round: "R32", teams: r32Updates }], { onConflict: "round" }
+                          );
+                          setActualR32(r32Updates);
+                        }
+                        // Also update ko_fixtures for resolved R32 matches
+                        const fixtureRows = [];
+                        R32_MATCHES.forEach((m, i) => {
+                          const resolve = slot => {
+                            if (slot.type === "W") return newGroupTopThree[slot.grp]?.first || "";
+                            if (slot.type === "R") return newGroupTopThree[slot.grp]?.second || "";
+                            return "";
+                          };
+                          const home = resolve(m.home), away = resolve(m.away);
+                          if (home || away) fixtureRows.push({ round: "R32", game_index: i, home_team: home, away_team: away });
+                        });
+                        if (fixtureRows.length) {
+                          await supabase.from("ko_fixtures").upsert(fixtureRows, { onConflict: "round,game_index" });
+                          setKoFixtures(prev => {
+                            const r32 = [...(prev.R32 || Array(16).fill(null))];
+                            fixtureRows.forEach(f => { r32[f.game_index] = { home: f.home_team, away: f.away_team }; });
+                            return { ...prev, R32: r32 };
+                          });
+                        }
+                      }}
+                    >
+                      ✓ Auto-fill clinched
+                    </button>
+                  </div>
+                  <div className="group-grid">
+                    {Object.entries(GROUPS).map(([grp, teams]) => {
+                      const v = actualGroupTopThree[grp] || { first: "", second: "", third: "" };
+                      const canEdit = testPhase || groupStarted(grp);
+                      const clinched = canEdit ? computeClinch(grp, teams) : {};
+                      return (
+                        <div key={grp} className="group-box" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                          <div className="group-box-title">Group {grp}{!canEdit && " ⏳"}</div>
+                          {["first", "second", "third"].map((rank, i) => {
+                            const pos = i + 1;
+                            const clinchedTeam = teams.find(t => clinched[t] === pos);
+                            return (
+                              <div key={rank} className="rank-row">
+                                <div className="rank-num">{pos}</div>
+                                <select
+                                  className="rank-sel"
+                                  disabled={!canEdit}
+                                  value={v[rank] || ""}
+                                  onChange={e => {
+                                    const team = e.target.value;
+                                    setActualGroupTopThree(prev => ({ ...prev, [grp]: { ...prev[grp], [rank]: team } }));
+                                    // Sync to R32: W = first (pos 1), R = second (pos 2)
+                                    const r32Type = rank === "first" ? "W" : rank === "second" ? "R" : null;
+                                    if (r32Type && team) {
+                                      setActualR32(prev => {
+                                        const next = [...prev];
+                                        R32_MATCHES.forEach((m, i) => {
+                                          [{ slot: m.home, idx: i * 2 }, { slot: m.away, idx: i * 2 + 1 }].forEach(({ slot, idx }) => {
+                                            if (slot.grp === grp && slot.type === r32Type) next[idx] = team;
+                                          });
+                                        });
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <option value="">— pick —</option>
+                                  {[...teams].sort((a, b) => a.localeCompare(b)).map(t => (
+                                    <option key={t} value={t}>{f(t)} {t}</option>
+                                  ))}
+                                </select>
+                                {clinchedTeam && !v[rank] && (
+                                  <span style={{ fontSize: 10, color: "#4caf80", marginLeft: 4, whiteSpace: "nowrap" }}>
+                                    ✓ {clinchedTeam}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* KO ACTUAL SCORES */}
-            {adminTab === "ko_results" && KO_ROUNDS.map(r => (
-              <div key={r.id} className="card">
-                <div className="card-label">{r.label} — actual scores</div>
-                <KoMatchGrid
-                  round={r.id}
-                  fixtures={koFixtures[r.id]}
-                  scores={koActualScores[r.id]}
-                  setScores={s => setKoActualScores(prev => ({ ...prev, [r.id]: s }))}
-                  disabled={false}
-                />
-              </div>
-            ))}
+            {adminTab === "ko_results" && KO_ROUNDS.map(r => {
+              const canEdit = testPhase || roundStarted(r);
+              return (
+                <div key={r.id} className="card" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                  <div className="card-label">
+                    {r.label} — actual scores
+                    {!canEdit && <span style={{ color:"var(--text-dark)", marginLeft:8, fontSize:11 }}>⏳ Not started yet</span>}
+                  </div>
+                  <KoMatchGrid
+                    round={r.id}
+                    fixtures={koFixtures[r.id]}
+                    scores={koActualScores[r.id]}
+                    setScores={s => setKoActualScores(prev => ({ ...prev, [r.id]: s }))}
+                    disabled={!canEdit}
+                  />
+                </div>
+              );
+            })}
 
             {/* QUALIFIERS */}
             {adminTab === "qualifiers" && (
@@ -904,43 +1437,184 @@ export default function App() {
                   { id: "R32", label: "R32 Qualifiers (32 teams)", arr: actualR32, setArr: setActualR32, size: 32 },
                   { id: "R16", label: "R16 Qualifiers (16 teams)", arr: actualR16, setArr: setActualR16, size: 16 },
                   { id: "QF",  label: "Quarter-Finalists (8 teams)", arr: actualQF, setArr: setActualQF, size: 8 },
-                ].map(({ id, label, arr, setArr, size }) => (
-                  <div key={id} className="card">
-                    <div className="card-label">{label}</div>
-                    <div className="ko-grid">
-                      {Array(size).fill(0).map((_, i) => (
-                        <select
-                          key={i} className="rank-sel"
-                          value={arr[i] || ""}
-                          onChange={e => { const u = [...arr]; u[i] = e.target.value; setArr(u); }}
-                        >
-                          <option value="">— team {i + 1} —</option>
-                          {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                        </select>
-                      ))}
+                ].map(({ id, label, arr, setArr, size }) => {
+                  const r = KO_ROUNDS.find(r => r.id === id);
+                  const canEdit = testPhase || (id === "R32" ? isPast(GLOBAL_DEADLINE) : (r && roundStarted(r)));
+                  return (
+                    <div key={id} className="card" style={{ opacity: canEdit ? 1 : 0.45 }}>
+                      <div className="card-label">
+                        {label}
+                        {!canEdit && <span style={{ color:"var(--text-dark)", marginLeft:8, fontSize:11 }}>⏳ Not started yet</span>}
+                      </div>
+                      <div className="ko-grid">
+                        {Array(size).fill(0).map((_, i) => (
+                          <select
+                            key={i} className="rank-sel"
+                            disabled={!canEdit}
+                            value={arr[i] || ""}
+                            onChange={e => { const u = [...arr]; u[i] = e.target.value; setArr(u); }}
+                          >
+                            <option value="">— team {i + 1} —</option>
+                            {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                          </select>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="card">
                   <div className="card-label">Final standings (1st–4th)</div>
                   <div className="sf-list">
-                    {FINAL_RANKS.map((label, i) => (
-                      <div key={i} className="sf-row">
-                        <div className="sf-rank-label">{label}</div>
-                        <select
-                          className="rank-sel" style={{ maxWidth: 220 }}
-                          value={actualSFRank[i] || ""}
-                          onChange={e => { const u = [...actualSFRank]; u[i] = e.target.value; setActualSFRank(u); }}
-                        >
-                          <option value="">— team —</option>
-                          {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
-                        </select>
-                      </div>
-                    ))}
+                    {FINAL_RANKS.map((label, i) => {
+                      const r = KO_ROUNDS.find(r => r.id === "FINAL");
+                      const canEdit = testPhase || (r && roundStarted(r));
+                      return (
+                        <div key={i} className="sf-row">
+                          <div className="sf-rank-label">{label}</div>
+                          <select
+                            className="rank-sel" style={{ maxWidth: 220 }}
+                            disabled={!canEdit}
+                            value={actualSFRank[i] || ""}
+                            onChange={e => { const u = [...actualSFRank]; u[i] = e.target.value; setActualSFRank(u); }}
+                          >
+                            <option value="">— team —</option>
+                            {SORTED_TEAMS.map(t => <option key={t} value={t}>{f(t)} {t}</option>)}
+                          </select>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </>
             )}
+
+            {/* TEAM STRENGTHS */}
+            {adminTab === "strengths" && (() => {
+              // Merge DB values with any unsaved local edits for display
+              const rows = ALL_TEAMS.map(name => {
+                const db  = { fifa_rank: teamStrengths?.fifa?.[name] ?? "", opta_win_pct: teamStrengths?.opta?.[name] ?? "" };
+                const ed  = strengthsEdits[name] || {};
+                return {
+                  name,
+                  fifa_rank:    ed.fifa_rank    !== undefined ? ed.fifa_rank    : db.fifa_rank,
+                  opta_win_pct: ed.opta_win_pct !== undefined ? ed.opta_win_pct : db.opta_win_pct,
+                };
+              }).sort((a, b) => (+a.fifa_rank || 999) - (+b.fifa_rank || 999));
+
+              function setField(name, field, val) {
+                setStrengthsEdits(prev => ({
+                  ...prev,
+                  [name]: { ...(prev[name] || {}), [field]: val },
+                }));
+              }
+
+              async function saveStrengths() {
+                if (!Object.keys(strengthsEdits).length) return;
+                setStrengthsSaving(true);
+                setStrengthsSaved(false);
+                try {
+                  const upsertRows = Object.entries(strengthsEdits).map(([team_name, ed]) => ({
+                    team_name,
+                    fifa_rank:    ed.fifa_rank    !== "" ? +ed.fifa_rank    : null,
+                    opta_win_pct: ed.opta_win_pct !== "" ? +ed.opta_win_pct : null,
+                  }));
+                  await supabase.from("team_strengths").upsert(upsertRows, { onConflict: "team_name" });
+                  setStrengthsEdits({});
+                  await loadTeamStrengths();
+                  setStrengthsSaved(true);
+                  setTimeout(() => setStrengthsSaved(false), 3000);
+                } finally {
+                  setStrengthsSaving(false);
+                }
+              }
+
+              const dirty = Object.keys(strengthsEdits).length > 0;
+
+              return (
+                <div className="card">
+                  <div className="card-label">
+                    Team Strengths — used by the bracket simulation on the Dashboard
+                  </div>
+                  <p style={{ fontSize: 12, color: "var(--text-dark)", margin: "8px 0 12px" }}>
+                    Edit FIFA ranking (lower = stronger) and Opta win probability (%) for each team.
+                    Changes apply immediately to everyone's bracket simulation after saving.
+                    For a new tournament: update all values here — no code changes needed.
+                  </p>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="deadline-table" style={{ width: "100%", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left" }}>#</th>
+                          <th style={{ textAlign: "left" }}>Team</th>
+                          <th style={{ width: 90 }}>FIFA Rank</th>
+                          <th style={{ width: 110 }}>Opta Win %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row, idx) => {
+                          const changed = !!strengthsEdits[row.name];
+                          return (
+                            <tr key={row.name} style={{ borderBottom: "1px solid #0e1a2e", background: changed ? "rgba(240,192,48,0.05)" : undefined }}>
+                              <td style={{ color: "var(--text-dark)", padding: "4px 6px" }}>{idx + 1}</td>
+                              <td style={{ padding: "4px 6px", fontWeight: changed ? 700 : 400, color: changed ? "#f0c030" : undefined }}>
+                                {f(row.name)} {row.name}
+                              </td>
+                              <td style={{ padding: "4px 6px", textAlign: "center" }}>
+                                <input
+                                  type="number" min="1" max="250"
+                                  value={row.fifa_rank}
+                                  onChange={e => setField(row.name, "fifa_rank", e.target.value)}
+                                  style={{
+                                    width: 70, textAlign: "center", background: "#0a1628",
+                                    border: "1px solid #2a3a5a", borderRadius: 4,
+                                    color: "var(--text-main)", padding: "3px 6px", fontSize: 12,
+                                  }}
+                                />
+                              </td>
+                              <td style={{ padding: "4px 6px", textAlign: "center" }}>
+                                <input
+                                  type="number" min="0" max="100" step="0.01"
+                                  value={row.opta_win_pct}
+                                  onChange={e => setField(row.name, "opta_win_pct", e.target.value)}
+                                  style={{
+                                    width: 80, textAlign: "center", background: "#0a1628",
+                                    border: "1px solid #2a3a5a", borderRadius: 4,
+                                    color: "var(--text-main)", padding: "3px 6px", fontSize: 12,
+                                  }}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+                    <button
+                      className="btn-save"
+                      disabled={!dirty || strengthsSaving}
+                      onClick={saveStrengths}
+                      style={{ width: "auto", opacity: dirty ? 1 : 0.4 }}
+                    >
+                      {strengthsSaving ? "Saving…" : `💾 Save Changes${dirty ? ` (${Object.keys(strengthsEdits).length} edited)` : ""}`}
+                    </button>
+                    {dirty && (
+                      <button className="tab" onClick={() => setStrengthsEdits({})}>
+                        ✕ Discard
+                      </button>
+                    )}
+                    {strengthsSaved && (
+                      <span style={{ color: "#4caf80", fontSize: 13, fontWeight: 700 }}>✓ Saved!</span>
+                    )}
+                    {!dirty && !strengthsSaved && (
+                      <span style={{ fontSize: 12, color: "var(--text-dark)" }}>
+                        {teamStrengths ? `${Object.keys(teamStrengths.fifa).length} teams loaded from database` : "Loading from database…"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* NUDGE PLAYERS */}
             {adminTab === "nudge" && (
@@ -1019,13 +1693,25 @@ export default function App() {
               </div>
             )}
 
-            <div className="save-row">
+            <div className="save-row" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 className={`btn-save ${saveState === "saved" ? "saved" : ""}`}
                 disabled={saveState === "saving"}
                 onClick={saveActuals}
               >
                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved!" : "Save Results"}
+              </button>
+              <button
+                className="tab"
+                style={{ fontSize: 13, padding: "10px 20px" }}
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try { await exportAllPicks(); }
+                  finally { setExporting(false); }
+                }}
+              >
+                {exporting ? "Generating…" : "📥 Backup All Picks (.xlsx)"}
               </button>
             </div>
           </>

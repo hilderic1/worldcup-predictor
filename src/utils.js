@@ -87,7 +87,10 @@ export function isPast(isoString) {
 export function currentOpenRound() {
   if (!isPast(GLOBAL_DEADLINE)) return "GROUP";
   for (const r of KO_ROUNDS) {
-    if (!isPast(r.deadline)) return r.id;
+    // Lock at whichever comes first: the explicit deadline or the first kickoff
+    const deadlineMs = new Date(r.deadline).getTime();
+    const kickoffMs  = r.firstKickoff ? new Date(r.firstKickoff).getTime() : Infinity;
+    if (Date.now() < Math.min(deadlineMs, kickoffMs)) return r.id;
   }
   return "CLOSED";
 }

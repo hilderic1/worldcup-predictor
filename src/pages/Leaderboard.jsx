@@ -2,10 +2,49 @@ import { useState, useMemo } from "react";
 import { GLOBAL_DEADLINE, PLAYERS, PLAYER_COLORS } from "../constants";
 import { isPast } from "../utils";
 
-function ScoreHistoryChart({ history }) {
+function StatTable({ title, icon, rows, valueKey, format, ascending = false, note }) {
+  const sorted = [...rows].sort((a, b) => {
+    const av = a[valueKey], bv = b[valueKey];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return ascending ? av - bv : bv - av;
+  });
+  return (
+    <div style={{ background: "#0a1628", borderRadius: 8, padding: "10px 12px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#f0c030", marginBottom: 6, letterSpacing: 1 }}>
+        {icon} {title}
+      </div>
+      {note && <div style={{ fontSize: 10, color: "var(--text-dark)", marginBottom: 6 }}>{note}</div>}
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+        <tbody>
+          {sorted.map((row, idx) => (
+            <tr key={row.name} style={{ borderBottom: "1px solid #0e1a2e" }}>
+              <td style={{ padding: "3px 3px", color: "var(--text-dark)", width: 16 }}>{idx + 1}</td>
+              <td style={{ padding: "3px 3px" }}>
+                <span style={{
+                  display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+                  background: PLAYER_COLORS[row.name], marginRight: 5, verticalAlign: "middle",
+                }} />
+                <span style={{ color: idx === 0 ? "#f0c030" : "var(--text-main)", fontWeight: idx === 0 ? 700 : 400 }}>
+                  {row.name}
+                </span>
+              </td>
+              <td style={{ padding: "3px 3px", textAlign: "right", fontWeight: 700, color: idx === 0 ? "#f0c030" : "var(--text-dark)" }}>
+                {row[valueKey] == null ? "—" : format(row[valueKey])}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ScoreHistoryChart({ history, restrictedToPlayer }) {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const [hoveredPlayer, setHoveredPlayer] = useState(null);
-  const [selectedPlayers, setSelectedPlayers] = useState(PLAYERS);
+  const [selectedPlayers, setSelectedPlayers] = useState(restrictedToPlayer ? [restrictedToPlayer] : PLAYERS);
 
   // Setup dimensions
   const width = 800;
@@ -387,9 +426,12 @@ function ScoreHistoryChart({ history }) {
   );
 }
 
-export default function Leaderboard({ leaderboard, history = [], loading, onRefresh }) {
+export default function Leaderboard({ leaderboard, history = [], loading, onRefresh, player, playerStats = {} }) {
   const [activeTab, setActiveTab] = useState("standings");
   const globalLocked = isPast(GLOBAL_DEADLINE);
+
+  const filteredLeaderboard = leaderboard;
+  const filteredHistory = history;
 
   return (
     <>
@@ -417,13 +459,19 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
         >
           📈 Score Evolution
         </button>
+        <button
+          className={`tab ${activeTab === "stats" ? "active" : ""}`}
+          onClick={() => setActiveTab("stats")}
+        >
+          📊 Stats
+        </button>
       </div>
 
       {loading ? (
         <div className="spinner">Calculating…</div>
       ) : activeTab === "standings" ? (
         <div className="lb-list">
-          {leaderboard.map((e, idx) => (
+          {filteredLeaderboard.map((e, idx) => (
             <div
               key={e.name}
               className={`lb-row ${idx === 0 ? "r1" : idx === 1 ? "r2" : idx === 2 ? "r3" : ""}`}
@@ -442,8 +490,32 @@ export default function Leaderboard({ leaderboard, history = [], loading, onRefr
             </div>
           ))}
         </div>
+      ) : activeTab === "history" ? (
+        <ScoreHistoryChart history={filteredHistory} restrictedToPlayer={null} />
       ) : (
-        <ScoreHistoryChart history={history} />
+        (() => {
+          const statRows = PLAYERS.map(name => ({
+            name,
+            ...(playerStats[name] || {}),
+          }));
+          const lbMap = {};
+          leaderboard.forEach(e => { lbMap[e.name] = e; });
+          const groupRows = PLAYERS.map(name => ({ name, matchPts: (lbMap[name]?.matchPts ?? 0) + (lbMap[name]?.koMatchPts ?? 0) }));
+          const koRows = PLAYERS.map(name => ({
+            name,
+            koPts: (lbMap[name]?.r32Pts ?? 0) + (lbMap[name]?.r16Pts ?? 0) + (lbMap[name]?.qfPts ?? 0) + (lbMap[name]?.sfPts ?? 0),
+          }));
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <StatTable title="Perfect Games" icon="🎯" rows={statRows} valueKey="perfectGames" format={v => v} note="Exact scoreline = 40 pts" />
+              <StatTable title="Correct Outcomes" icon="✅" rows={statRows} valueKey="correctResults" format={v => v} note="W / D / L right" />
+              <StatTable title="Closest Scorer" icon="📏" rows={statRows} valueKey="avgGoalDiff" format={v => v.toFixed(2)} ascending note="Avg goal diff (lower = better)" />
+              <StatTable title="Group Stage Pts" icon="⚽" rows={groupRows} valueKey="matchPts" format={v => v} />
+              <StatTable title="Group Top-3 Pts" icon="🥇" rows={PLAYERS.map(name => ({ name, groupPts: lbMap[name]?.groupPts ?? 0 }))} valueKey="groupPts" format={v => v} note="5 pts per correct 1st/2nd/3rd" />
+              <StatTable title="KO Bracket Pts" icon="🔮" rows={koRows} valueKey="koPts" format={v => v} note="R32 + R16 + QF + SF/Final" />
+            </div>
+          );
+        })()
       )}
     </>
   );

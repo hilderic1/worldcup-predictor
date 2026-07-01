@@ -3,7 +3,23 @@ import { supabase } from "../supabase";
 import {
   PLAYERS, PLAYER_COLORS, GROUPS, GROUP_MATCHES, FINAL_RANKS, KO_ROUNDS, f,
 } from "../constants";
-import { scoreMatch } from "../utils";
+import { scoreMatch, currentOpenRound } from "../utils";
+
+// Round order used to decide visibility
+const ROUND_ORDER = ["GROUP", "R32", "R16", "QF", "SF", "FINAL", "CLOSED"];
+
+// A KO round's picks become visible to all once a later round opens (i.e., it's fully closed)
+function roundVisibleToAll(roundId) {
+  const open = currentOpenRound();
+  return ROUND_ORDER.indexOf(open) > ROUND_ORDER.indexOf(roundId);
+}
+
+function matchSortKey(m) {
+  const [mo, d, yr] = m.date.split("/");
+  const [h, min] = m.time.split(":");
+  return new Date(`20${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}T${h.padStart(2,"0")}:${min}:00`).getTime();
+}
+const MATCHES_BY_TIME = [...GROUP_MATCHES].sort((a, b) => matchSortKey(a) - matchSortKey(b));
 
 function getMatchPickClass(pred, actual) {
   if (!actual || actual.home_score == null) return "pick-pending";
@@ -97,6 +113,12 @@ export default function AllPredictions({
 
   const comparing = !!rightPlayer && !!rightPreds;
 
+  // Returns true if the given player's picks for this round can be shown to the logged-in user.
+  // Own picks are always visible; other players' picks are only visible once the round has closed.
+  function canView(name, roundId) {
+    return name === player?.name || roundVisibleToAll(roundId);
+  }
+
   function PlayerPill({ name, selected, onClick }) {
     return (
       <button
@@ -127,7 +149,7 @@ export default function AllPredictions({
   return (
     <>
       <div className="section-header">
-        <div className="section-title">👁 Predictions</div>
+        <div className="section-title">👁 Compare Players Picks</div>
       </div>
 
       {/* Player selectors */}
@@ -209,70 +231,63 @@ export default function AllPredictions({
         <>
           {/* ── GROUP MATCH SCORES ── */}
           {activeTab === "group-scores" && (
-            Object.entries(GROUPS).map(([grp]) => (
-              <div key={grp} className="card">
-                <div className="card-label">Group {grp}</div>
-                <div className="match-list">
-                  {GROUP_MATCHES.filter(m => m.group === grp).map(m => {
-                    const lPred = leftPreds.matches[m.id] || {};
-                    const rPred = comparing ? (rightPreds.matches[m.id] || {}) : null;
-                    const actual = actualMatches[m.id];
-                    const lCls = getMatchPickClass(lPred, actual);
-                    const rCls = rPred ? getMatchPickClass(rPred, actual) : null;
-                    const lSc = actual ? scoreMatch(lPred, actual) : null;
-                    const rSc = (actual && rPred) ? scoreMatch(rPred, actual) : null;
-                    return (
-                      <div key={m.id} className="match-row">
-                        {comparing ? (
-                          <>
-                            <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
-                              <div style={{ textAlign: "right" }}>
-                                <span className={`score-badge ${lCls}`} style={{ color: PLAYER_COLORS[leftPlayer] }}>
-                                  {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
-                                </span>
-                              </div>
-                              <div style={{ textAlign: "center", fontSize: 12 }}>
-                                <span style={{ color: "#8a9aba" }}>{f(m.home)} {m.home}</span>
-                                <span style={{ margin: "0 6px", color: "var(--text-dark)" }}>vs</span>
-                                <span style={{ color: "#8a9aba" }}>{m.away} {f(m.away)}</span>
-                              </div>
-                              <div style={{ textAlign: "left" }}>
-                                <span className={`score-badge ${rCls}`} style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                                  {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
-                                </span>
-                              </div>
-                            </div>
-                            <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
-                              <span style={{ color: PLAYER_COLORS[leftPlayer] }}>
-                                {lSc !== null ? `${lSc.total}pts` : "—"}
-                              </span>
-                              <span>{m.date} {m.time} UTC {actual ? `(${actual.home_score}–${actual.away_score})` : "not played"}</span>
-                              <span style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                                {rSc !== null ? `${rSc.total}pts` : "—"}
-                              </span>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="team-l">{f(m.home)} {m.home}</div>
-                            <div className={`score-badge ${lCls}`}>{lPred.home_score ?? "–"}</div>
-                            <div className="sep">–</div>
-                            <div className={`score-badge ${lCls}`}>{lPred.away_score ?? "–"}</div>
-                            <div className="team-r">{m.away} {f(m.away)}</div>
-                            <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <span style={{ fontSize: 10, color: "#2a3a5a" }}>{m.date} {m.time} UTC</span>
-                              {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
-                              {actual && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
-                              {!actual && <span style={{ fontSize: 10, color: "var(--text-dark)" }}>not played yet</span>}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+            <div className="card">
+              <div className="match-list">
+                {MATCHES_BY_TIME.map(m => {
+                  const lPred = leftPreds.matches[m.id] || {};
+                  const rPred = comparing ? (rightPreds.matches[m.id] || {}) : null;
+                  const actual = actualMatches[m.id];
+                  const lCls = getMatchPickClass(lPred, actual);
+                  const rCls = rPred ? getMatchPickClass(rPred, actual) : null;
+                  const lSc = actual ? scoreMatch(lPred, actual) : null;
+                  const rSc = (actual && rPred) ? scoreMatch(rPred, actual) : null;
+                  const scoreBadgeStyle = { width: "auto", flexShrink: 0, padding: "5px 10px", fontSize: 15, whiteSpace: "nowrap" };
+                  return (
+                    <div key={m.id} className="match-row" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {comparing ? (
+                        <>
+                          <div style={{ textAlign: "center", fontSize: 12, color: "#8a9aba" }}>
+                            {f(m.home)} {m.home} <span style={{ color: "var(--text-dark)", margin: "0 4px" }}>vs</span> {m.away} {f(m.away)}
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <span className={`score-badge ${lCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[leftPlayer] }}>
+                              {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                            </span>
+                            <span style={{ fontSize: 11, color: "var(--text-dark)", flexShrink: 0 }}>
+                              {actual ? `${actual.home_score}–${actual.away_score}` : "—"}
+                            </span>
+                            <span className={`score-badge ${rCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[rightPlayer] }}>
+                              {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
+                            <span style={{ color: PLAYER_COLORS[leftPlayer] }}>{lSc !== null ? `${lSc.total}pts` : "—"}</span>
+                            <span>Grp {m.group} · {m.date}</span>
+                            <span style={{ color: PLAYER_COLORS[rightPlayer] }}>{rSc !== null ? `${rSc.total}pts` : "—"}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, textAlign: "right", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{f(m.home)} {m.home}</div>
+                            <span className={`score-badge ${lCls}`} style={scoreBadgeStyle}>
+                              {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                            </span>
+                            <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{m.away} {f(m.away)}</div>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: 10, color: "#2a3a5a" }}>Grp {m.group} · {m.date} {m.time} UTC</span>
+                            {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
+                            {actual && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
+                            {!actual && <span style={{ fontSize: 10, color: "var(--text-dark)" }}>not played yet</span>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ))
+            </div>
           )}
 
           {/* ── QUALIFYING PICKS ── */}
@@ -316,100 +331,172 @@ export default function AllPredictions({
 
               {/* Qualifier chips — show side by side rows when comparing */}
               {[
-                { label: "R32 Qualifiers — 32 teams (10 pts each)", lArr: leftPreds.r32, rArr: comparing ? rightPreds.r32 : null, actual: actualR32 },
-                { label: "R16 Qualifiers — 16 teams (15 pts each)", lArr: leftPreds.r16, rArr: comparing ? rightPreds.r16 : null, actual: actualR16 },
-                { label: "Quarter-Finalists — 8 teams (20 pts each)", lArr: leftPreds.qf, rArr: comparing ? rightPreds.qf : null, actual: actualQF },
-              ].map(({ label, lArr, rArr, actual }) => (
-                <div key={label} className="card">
-                  <div className="card-label">{label}</div>
-                  {comparing ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                      <div>
-                        <div style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700, marginBottom: 6 }}>{leftPlayer}</div>
-                        <div className="ko-chips">
-                          {lArr.map((team, i) => (
-                            <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
-                              {team ? <>{f(team)} {team}</> : <span style={{ color: "var(--text-dark)" }}>#{i + 1}</span>}
+                { label: "R32 Qualifiers — 32 teams (10 pts each)", lArr: leftPreds.r32, rArr: comparing ? rightPreds.r32 : null, actual: actualR32, roundId: "R32" },
+                { label: "R16 Qualifiers — 16 teams (15 pts each)", lArr: leftPreds.r16, rArr: comparing ? rightPreds.r16 : null, actual: actualR16, roundId: "R16" },
+                { label: "Quarter-Finalists — 8 teams (20 pts each)", lArr: leftPreds.qf, rArr: comparing ? rightPreds.qf : null, actual: actualQF, roundId: "QF" },
+              ].map(({ label, lArr, rArr, actual, roundId }) => {
+                const lVisible = canView(leftPlayer, roundId);
+                const rVisible = comparing && canView(rightPlayer, roundId);
+                return (
+                  <div key={label} className="card">
+                    <div className="card-label">{label}</div>
+                    {!lVisible ? (
+                      <div style={{ color: "var(--text-dark)", fontSize: 13 }}>🔒 Picks hidden until this round closes</div>
+                    ) : comparing && rArr ? (() => {
+                      if (!rVisible) {
+                        // Show left player's chips only, with locked notice for right
+                        return (
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                              <span style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700 }}>{leftPlayer}</span>
+                              <span style={{ fontSize: 11, color: "var(--text-dark)" }}>🔒 {rightPlayer}'s picks hidden</span>
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 11, color: PLAYER_COLORS[rightPlayer], fontWeight: 700, marginBottom: 6 }}>{rightPlayer}</div>
-                        <div className="ko-chips">
-                          {rArr.map((team, i) => (
-                            <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
-                              {team ? <>{f(team)} {team}</> : <span style={{ color: "var(--text-dark)" }}>#{i + 1}</span>}
+                            <div className="ko-chips">
+                              {lArr.filter(Boolean).sort().map(team => (
+                                <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`} style={{ color: PLAYER_COLORS[leftPlayer], borderColor: PLAYER_COLORS[leftPlayer] }}>
+                                  {f(team)} {team}
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          </div>
+                        );
+                      }
+                      const lSet = new Set(lArr.filter(Boolean));
+                      const rSet = new Set(rArr.filter(Boolean));
+                      const shared = [...lSet].filter(t => rSet.has(t)).sort();
+                      const lOnly = [...lSet].filter(t => !rSet.has(t)).sort();
+                      const rOnly = [...rSet].filter(t => !lSet.has(t)).sort();
+                      return (
+                        <div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 6 }}>
+                            <div style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700 }}>{leftPlayer}</div>
+                            <div style={{ fontSize: 11, color: PLAYER_COLORS[rightPlayer], fontWeight: 700 }}>{rightPlayer}</div>
+                          </div>
+                          {shared.length > 0 && (
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ fontSize: 10, color: "var(--text-dark)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Both picked</div>
+                              <div className="ko-chips">
+                                {shared.map(team => (
+                                  <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
+                                    {f(team)} {team}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(lOnly.length > 0 || rOnly.length > 0) && (
+                            <div>
+                              <div style={{ fontSize: 10, color: "var(--text-dark)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Differ</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                <div className="ko-chips">
+                                  {lOnly.map(team => (
+                                    <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`} style={{ color: PLAYER_COLORS[leftPlayer], borderColor: PLAYER_COLORS[leftPlayer] }}>
+                                      {f(team)} {team}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="ko-chips">
+                                  {rOnly.map(team => (
+                                    <div key={team} className={`pick-chip ${getQualifierChipClass(team, actual)}`} style={{ color: PLAYER_COLORS[rightPlayer], borderColor: PLAYER_COLORS[rightPlayer] }}>
+                                      {f(team)} {team}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
+                      );
+                    })() : (
+                      <div className="ko-chips">
+                        {lArr.map((team, i) => (
+                          <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
+                            {team ? <>{f(team)} {team}</> : <span style={{ color: "var(--text-dark)" }}>#{i + 1}</span>}
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="ko-chips">
-                      {lArr.map((team, i) => (
-                        <div key={i} className={`pick-chip ${getQualifierChipClass(team, actual)}`}>
-                          {team ? <>{f(team)} {team}</> : <span style={{ color: "var(--text-dark)" }}>#{i + 1}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
 
               {/* Final Ranking */}
-              <div className="card">
-                <div className="card-label">Final standings 1st–4th (25 pts per team + 5 pts for correct rank)</div>
-                {comparing && (
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700 }}>{leftPlayer}</span>
-                    <span style={{ fontSize: 11, color: PLAYER_COLORS[rightPlayer], fontWeight: 700 }}>{rightPlayer}</span>
-                  </div>
-                )}
-                <div className="sf-list">
-                  {FINAL_RANKS.map((label, i) => {
-                    const lTeam = leftPreds.sfRank[i] || "";
-                    const rTeam = comparing ? (rightPreds.sfRank[i] || "") : null;
-                    const actualSet = actualSFRank.filter(Boolean);
-                    const sfCls = (team) => !team ? "pick-pending"
-                      : !actualSet.length ? "pick-pending"
-                      : actualSFRank[i] === team ? "pick-exact"
-                      : actualSet.includes(team) ? "pick-correct"
-                      : "pick-wrong";
-                    return (
-                      <div key={i} className="sf-row">
-                        <div className="sf-rank-label">{label}</div>
-                        <div className={`pick-chip ${sfCls(lTeam)}`} style={comparing ? { color: PLAYER_COLORS[leftPlayer] } : {}}>
-                          {lTeam ? <>{f(lTeam)} {lTeam}</> : <span style={{ color: "var(--text-dark)" }}>—</span>}
-                        </div>
+              {(() => {
+                const lVisible = canView(leftPlayer, "SF");
+                const rVisible = comparing && canView(rightPlayer, "SF");
+                return (
+                  <div className="card">
+                    <div className="card-label">Final standings 1st–4th (25 pts per team + 5 pts for correct rank)</div>
+                    {!lVisible ? (
+                      <div style={{ color: "var(--text-dark)", fontSize: 13 }}>🔒 Picks hidden until this round closes</div>
+                    ) : (
+                      <>
                         {comparing && (
-                          <div className={`pick-chip ${sfCls(rTeam)}`} style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                            {rTeam ? <>{f(rTeam)} {rTeam}</> : <span style={{ color: "var(--text-dark)" }}>—</span>}
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginBottom: 8 }}>
+                            <span style={{ fontSize: 11, color: PLAYER_COLORS[leftPlayer], fontWeight: 700 }}>{leftPlayer}</span>
+                            {rVisible
+                              ? <span style={{ fontSize: 11, color: PLAYER_COLORS[rightPlayer], fontWeight: 700 }}>{rightPlayer}</span>
+                              : <span style={{ fontSize: 11, color: "var(--text-dark)" }}>🔒 {rightPlayer}'s picks hidden</span>
+                            }
                           </div>
                         )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                        <div className="sf-list">
+                          {FINAL_RANKS.map((label, i) => {
+                            const lTeam = leftPreds.sfRank[i] || "";
+                            const rTeam = rVisible ? (rightPreds.sfRank[i] || "") : null;
+                            const actualSet = actualSFRank.filter(Boolean);
+                            const sfCls = (team) => !team ? "pick-pending"
+                              : !actualSet.length ? "pick-pending"
+                              : actualSFRank[i] === team ? "pick-exact"
+                              : actualSet.includes(team) ? "pick-correct"
+                              : "pick-wrong";
+                            return (
+                              <div key={i} className="sf-row">
+                                <div className="sf-rank-label">{label}</div>
+                                <div className={`pick-chip ${sfCls(lTeam)}`} style={comparing ? { color: PLAYER_COLORS[leftPlayer] } : {}}>
+                                  {lTeam ? <>{f(lTeam)} {lTeam}</> : <span style={{ color: "var(--text-dark)" }}>—</span>}
+                                </div>
+                                {comparing && rVisible && (
+                                  <div className={`pick-chip ${sfCls(rTeam)}`} style={{ color: PLAYER_COLORS[rightPlayer] }}>
+                                    {rTeam ? <>{f(rTeam)} {rTeam}</> : <span style={{ color: "var(--text-dark)" }}>—</span>}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
 
           {/* ── KO MATCH SCORES ── */}
           {activeTab === "ko-scores" && (
             KO_ROUNDS.map(r => {
+              const lVisible = canView(leftPlayer, r.id);
+              const rVisible = comparing && canView(rightPlayer, r.id);
               const roundFixtures = koFixtures[r.id] || [];
-              const lRoundPreds = leftPreds.koMatchPreds[r.id] || [];
-              const rRoundPreds = comparing ? (rightPreds.koMatchPreds[r.id] || []) : null;
+              const lRoundPreds = lVisible ? (leftPreds.koMatchPreds[r.id] || []) : [];
+              const rRoundPreds = rVisible ? (rightPreds.koMatchPreds[r.id] || []) : null;
               const roundActuals = koActualScores[r.id] || [];
               const hasFixtures = roundFixtures.some(fx => fx?.home);
               return (
                 <div key={r.id} className="card">
                   <div className="card-label">{r.label}</div>
-                  {!hasFixtures ? (
+                  {!lVisible ? (
+                    <div style={{ color: "var(--text-dark)", fontSize: 13 }}>🔒 Picks hidden until this round closes</div>
+                  ) : !hasFixtures ? (
                     <div style={{ color: "var(--text-dark)", fontSize: 13 }}>⏳ Fixtures not set yet</div>
                   ) : (
                     <div className="match-list">
+                      {comparing && !rVisible && (
+                        <div style={{ fontSize: 11, color: "var(--text-dark)", marginBottom: 8 }}>
+                          🔒 {rightPlayer}'s picks are hidden until this round closes
+                        </div>
+                      )}
                       {roundFixtures.map((fix, i) => {
                         if (!fix?.home) return null;
                         const lPred = lRoundPreds[i] || {};
@@ -420,45 +507,41 @@ export default function AllPredictions({
                         const rCls = rPred ? getMatchPickClass(rPred, actualHasScore ? actual : null) : null;
                         const lSc = actualHasScore ? scoreMatch(lPred, actual) : null;
                         const rSc = (actualHasScore && rPred) ? scoreMatch(rPred, actual) : null;
+                        const scoreBadgeStyle = { width: "auto", flexShrink: 0, padding: "5px 10px", fontSize: 15, whiteSpace: "nowrap" };
                         return (
-                          <div key={i} className="match-row">
-                            {comparing ? (
+                          <div key={i} className="match-row" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            {comparing && rVisible ? (
                               <>
-                                <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
-                                  <div style={{ textAlign: "right" }}>
-                                    <span className={`score-badge ${lCls}`} style={{ color: PLAYER_COLORS[leftPlayer] }}>
-                                      {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
-                                    </span>
-                                  </div>
-                                  <div style={{ textAlign: "center", fontSize: 12 }}>
-                                    <span style={{ color: "#8a9aba" }}>{f(fix.home)} {fix.home}</span>
-                                    <span style={{ margin: "0 6px", color: "var(--text-dark)" }}>vs</span>
-                                    <span style={{ color: "#8a9aba" }}>{fix.away} {f(fix.away)}</span>
-                                  </div>
-                                  <div style={{ textAlign: "left" }}>
-                                    <span className={`score-badge ${rCls}`} style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                                      {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
-                                    </span>
-                                  </div>
+                                <div style={{ textAlign: "center", fontSize: 12, color: "#8a9aba" }}>
+                                  {f(fix.home)} {fix.home} <span style={{ color: "var(--text-dark)", margin: "0 4px" }}>vs</span> {fix.away} {f(fix.away)}
                                 </div>
-                                <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
-                                  <span style={{ color: PLAYER_COLORS[leftPlayer] }}>
-                                    {lSc !== null ? `${lSc.total}pts` : "—"}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                  <span className={`score-badge ${lCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[leftPlayer] }}>
+                                    {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
                                   </span>
-                                  <span>{actualHasScore ? `${actual.home_score}–${actual.away_score}` : "not played"}</span>
-                                  <span style={{ color: PLAYER_COLORS[rightPlayer] }}>
-                                    {rSc !== null ? `${rSc.total}pts` : "—"}
+                                  <span style={{ fontSize: 11, color: "var(--text-dark)", flexShrink: 0 }}>
+                                    {actualHasScore ? `${actual.home_score}–${actual.away_score}` : "—"}
                                   </span>
+                                  <span className={`score-badge ${rCls}`} style={{ ...scoreBadgeStyle, color: PLAYER_COLORS[rightPlayer] }}>
+                                    {rPred.home_score ?? "–"}–{rPred.away_score ?? "–"}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dark)" }}>
+                                  <span style={{ color: PLAYER_COLORS[leftPlayer] }}>{lSc !== null ? `${lSc.total}pts` : "—"}</span>
+                                  <span>{actualHasScore ? "actual" : "not played"}</span>
+                                  <span style={{ color: PLAYER_COLORS[rightPlayer] }}>{rSc !== null ? `${rSc.total}pts` : "—"}</span>
                                 </div>
                               </>
                             ) : (
                               <>
-                                <div className="team-l">{f(fix.home)} {fix.home}</div>
-                                <div className={`score-badge ${lCls}`}>{lPred.home_score ?? "–"}</div>
-                                <div className="sep">–</div>
-                                <div className={`score-badge ${lCls}`}>{lPred.away_score ?? "–"}</div>
-                                <div className="team-r">{fix.away} {f(fix.away)}</div>
-                                <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <div style={{ flex: 1, textAlign: "right", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{f(fix.home)} {fix.home}</div>
+                                  <span className={`score-badge ${lCls}`} style={scoreBadgeStyle}>
+                                    {lPred.home_score ?? "–"}–{lPred.away_score ?? "–"}
+                                  </span>
+                                  <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{fix.away} {f(fix.away)}</div>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
                                   {lSc !== null && lSc.total > 0 && <span className="match-pts">+{lSc.total}pts</span>}
                                   {actualHasScore && lSc !== null && lSc.total === 0 && <span style={{ fontSize: 11, color: "var(--accent-red)", fontWeight: 600 }}>0 pts</span>}
                                   {!actualHasScore && <span style={{ fontSize: 10, color: "var(--text-dark)" }}>not played yet</span>}
